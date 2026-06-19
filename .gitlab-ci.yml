@@ -35,9 +35,7 @@ validate:
 build:
   stage: build
   script:
-    - export ${IMAGE_ENV_VAR}="${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}"
-    - docker compose -f docker-compose.yml build
-    - docker tag "${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}" "${IMAGE_NAME}:latest"
+    - docker build -f Dockerfile --target production -t "${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}" -t "${IMAGE_NAME}:latest" .
   rules:
     - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH'
 
