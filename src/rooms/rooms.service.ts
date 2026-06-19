@@ -9,7 +9,7 @@ import { MAX_ROOM_PARTICIPANTS } from "#contracts";
 import { randomBytes, randomUUID } from "node:crypto";
 import { RoomRepository } from "./room.repository.js";
 import { RoomTokenService } from "./room-token.service.js";
-import { roomFull } from "./room-errors.js";
+import { roomClosed, roomFull } from "./room-errors.js";
 
 @Injectable()
 export class RoomsService {
@@ -24,7 +24,6 @@ export class RoomsService {
     const slug = this.createSlug();
     const creatorToken = this.tokens.createCreatorToken();
     const createdAt = new Date();
-    const expiresAt = new Date(createdAt.getTime() + 30 * 60 * 1000);
     const mediaNode = this.selectMediaNode();
 
     const room = await this.repository.createRoom({
@@ -34,7 +33,7 @@ export class RoomsService {
       signalingUrl: mediaNode.signalingUrl,
       creatorTokenHash: this.tokens.hashCreatorToken(creatorToken),
       createdAt: createdAt.toISOString(),
-      expiresAt: expiresAt.toISOString(),
+      expiresAt: null,
     });
 
     return {
@@ -65,6 +64,9 @@ export class RoomsService {
 
   async joinRoom(slug: string, displayName: string, creatorToken?: string): Promise<JoinRoomResponse> {
     const room = await this.repository.getRoomBySlug(slug);
+    if (room.status === "closed") {
+      throw roomClosed();
+    }
 
     const count = await this.repository.getParticipantCount(room.roomId);
     if (count >= MAX_ROOM_PARTICIPANTS) {

@@ -4,8 +4,6 @@ import { REDIS_CLIENT } from "../redis/redis.constants.js";
 import type { RedisClient } from "../redis/redis.types.js";
 import { roomExpired, roomNotFound } from "./room-errors.js";
 
-const ROOM_TTL_SECONDS = 30 * 60;
-
 export type CreateRoomRecord = {
   roomId: string;
   slug: string;
@@ -13,7 +11,7 @@ export type CreateRoomRecord = {
   signalingUrl: string;
   creatorTokenHash: string;
   createdAt: string;
-  expiresAt: string;
+  expiresAt: string | null;
 };
 
 export abstract class RoomRepository {
@@ -37,8 +35,8 @@ export class RedisRoomRepository extends RoomRepository {
       throw roomNotFound();
     }
 
-    await this.redis.setEx(this.roomKey(room.roomId), ROOM_TTL_SECONDS, JSON.stringify(room));
-    await this.redis.setEx(this.slugKey(room.slug), ROOM_TTL_SECONDS, room.roomId);
+    await this.redis.set(this.roomKey(room.roomId), JSON.stringify(room));
+    await this.redis.set(this.slugKey(room.slug), room.roomId);
 
     return room;
   }
@@ -66,7 +64,7 @@ export class RedisRoomRepository extends RoomRepository {
       throw roomNotFound();
     }
 
-    if (new Date(room.expiresAt).getTime() <= Date.now()) {
+    if (room.expiresAt && new Date(room.expiresAt).getTime() <= Date.now()) {
       throw roomExpired();
     }
 
@@ -116,14 +114,17 @@ function parseRoomMetadata(value: unknown): RoomMetadata | undefined {
     room.creatorTokenHash.length === 0 ||
     typeof room.createdAt !== "string" ||
     Number.isNaN(Date.parse(room.createdAt)) ||
-    typeof room.expiresAt !== "string" ||
-    Number.isNaN(Date.parse(room.expiresAt)) ||
-    room.status !== "active"
+    !isExpiresAt(room.expiresAt) ||
+    (room.status !== "active" && room.status !== "closed")
   ) {
     return undefined;
   }
 
   return room as RoomMetadata;
+}
+
+function isExpiresAt(value: unknown): value is string | null {
+  return value === null || (typeof value === "string" && !Number.isNaN(Date.parse(value)));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

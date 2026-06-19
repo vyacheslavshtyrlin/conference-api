@@ -14,6 +14,13 @@ export function roomExpired() {
   });
 }
 
+export function roomClosed() {
+  return new GoneException({
+    code: "ROOM_CLOSED",
+    message: "Room closed",
+  });
+}
+
 export function roomFull() {
   return new ConflictException({
     code: "ROOM_FULL",

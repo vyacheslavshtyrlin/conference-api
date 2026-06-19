@@ -88,7 +88,7 @@ describe("RoomsController", () => {
       roomId: expect.stringMatching(/^room_/),
       slug: expect.any(String),
       creatorToken: expect.any(String),
-      expiresAt: expect.any(String),
+      expiresAt: null,
     });
     expect(createResponse.body.joinUrl).toBe(`http://web.test/r/${createResponse.body.slug}`);
     expect(createResponse.body.joinUrl).not.toContain(createResponse.body.creatorToken);

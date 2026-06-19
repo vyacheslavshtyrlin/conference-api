@@ -1,7 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { describe, expect, it } from "vitest";
 import type { RoomMetadata } from "#contracts";
-import { ROOM_TTL_SECONDS } from "#contracts";
 import { roomNotFound } from "./room-errors.js";
 import type { CreateRoomRecord } from "./room.repository.js";
 import { RoomRepository } from "./room.repository.js";
@@ -66,7 +65,7 @@ describe("RoomsService", () => {
     expect(stored.creatorTokenHash).not.toBe(room.creatorToken);
     expect(stored.mediaNodeId).toBe("local");
     expect(stored.signalingUrl).toBe("ws://signaling.test/ws");
-    expect(new Date(room.expiresAt).getTime() - Date.now()).toBeGreaterThan((ROOM_TTL_SECONDS - 5) * 1000);
+    expect(room.expiresAt).toBeNull();
   });
 
   it("returns creator metadata only for a valid creator token", async () => {
@@ -104,6 +103,21 @@ describe("RoomsService", () => {
     await expect(service.getRoom(room.slug)).resolves.toMatchObject({
       roomId: room.roomId,
       participantCount: 3,
+    });
+  });
+
+  it("rejects joins for closed rooms", async () => {
+    const { repository, service } = createService();
+    const room = await service.createRoom();
+    const stored = await repository.getRoomBySlug(room.slug);
+    repository.rooms.set(stored.roomId, {
+      ...stored,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      status: "closed",
+    });
+
+    await expect(service.joinRoom(room.slug, "Alex", room.creatorToken)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "ROOM_CLOSED" }),
     });
   });
 
