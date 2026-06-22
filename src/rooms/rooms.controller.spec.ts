@@ -20,7 +20,7 @@ class InMemoryRoomRepository extends RoomRepository {
   readonly sessions = new Map<string, RoomSessionRecord>();
 
   async createRoom(record: CreateRoomRecord): Promise<RoomMetadata> {
-    const room: RoomMetadata = { ...record, status: "active" };
+    const room: RoomMetadata = { ...record, status: "active", closedReason: null };
     this.rooms.set(room.roomId, room);
     this.slugs.set(room.slug, room.roomId);
     return room;

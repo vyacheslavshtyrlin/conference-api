@@ -14,7 +14,7 @@ class InMemoryRoomRepository extends RoomRepository {
   readonly sessions = new Map<string, RoomSessionRecord>();
 
   async createRoom(record: CreateRoomRecord): Promise<RoomMetadata> {
-    const room: RoomMetadata = { ...record, status: "active" };
+    const room: RoomMetadata = { ...record, status: "active", closedReason: null };
     this.rooms.set(room.roomId, room);
     this.slugs.set(room.slug, room.roomId);
     return room;
@@ -113,6 +113,24 @@ describe("RoomsService", () => {
     await expect(service.getRoom(room.slug)).resolves.toMatchObject({
       roomId: room.roomId,
       participantCount: 3,
+      closedReason: null,
+    });
+  });
+
+  it("returns the closed room reason in room lookup", async () => {
+    const { repository, service } = createService();
+    const room = await service.createRoom();
+    const stored = await repository.getRoomBySlug(room.slug);
+    repository.rooms.set(stored.roomId, {
+      ...stored,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      status: "closed",
+      closedReason: "media_server_error",
+    });
+
+    await expect(service.getRoom(room.slug)).resolves.toMatchObject({
+      status: "closed",
+      closedReason: "media_server_error",
     });
   });
 
@@ -124,6 +142,7 @@ describe("RoomsService", () => {
       ...stored,
       expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       status: "closed",
+      closedReason: "closed_by_creator",
     });
 
     await expect(service.joinRoom(room.slug, "Alex", room.creatorToken)).rejects.toMatchObject({
@@ -194,6 +213,7 @@ describe("RoomsService", () => {
       ...stored,
       expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       status: "closed",
+      closedReason: "closed_by_creator",
     });
 
     await expect(service.refreshRoomSession(room.slug, join.participantId, join.roomSessionToken)).rejects.toMatchObject({

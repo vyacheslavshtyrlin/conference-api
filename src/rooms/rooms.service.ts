@@ -58,6 +58,7 @@ export class RoomsService {
       slug: room.slug,
       expiresAt: room.expiresAt,
       status: room.status,
+      closedReason: room.closedReason ?? null,
       mediaNodeId: room.mediaNodeId,
       signalingUrl: room.signalingUrl,
       participantCount,

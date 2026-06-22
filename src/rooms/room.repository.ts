@@ -40,6 +40,7 @@ export class RedisRoomRepository extends RoomRepository {
     const room = parseRoomMetadata({
       ...record,
       status: "active",
+      closedReason: null,
     });
     if (!room) {
       throw roomNotFound();
@@ -181,6 +182,7 @@ function parseRoomMetadata(value: unknown): RoomMetadata | undefined {
     createdAt: value.createdAt,
     expiresAt: value.expiresAt,
     status: value.status,
+    closedReason: value.closedReason ?? null,
   };
 
   if (
@@ -197,7 +199,8 @@ function parseRoomMetadata(value: unknown): RoomMetadata | undefined {
     typeof room.createdAt !== "string" ||
     Number.isNaN(Date.parse(room.createdAt)) ||
     !isExpiresAt(room.expiresAt) ||
-    (room.status !== "active" && room.status !== "closed")
+    (room.status !== "active" && room.status !== "closed") ||
+    !isClosedReason(room.closedReason)
   ) {
     return undefined;
   }
@@ -207,6 +210,16 @@ function parseRoomMetadata(value: unknown): RoomMetadata | undefined {
 
 function isExpiresAt(value: unknown): value is string | null {
   return value === null || (typeof value === "string" && !Number.isNaN(Date.parse(value)));
+}
+
+function isClosedReason(value: unknown): value is RoomMetadata["closedReason"] {
+  return (
+    value === null ||
+    value === "closed_by_creator" ||
+    value === "empty_timeout" ||
+    value === "server_shutdown" ||
+    value === "media_server_error"
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
