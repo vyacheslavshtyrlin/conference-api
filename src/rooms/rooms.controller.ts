@@ -1,8 +1,9 @@
 import { Body, Controller, Get, Inject, Param, Post, ValidationPipe } from "@nestjs/common";
-import type { CreateRoomResponse, GetRoomResponse, JoinRoomResponse } from "#contracts";
+import type { CreateRoomResponse, GetRoomResponse, JoinRoomResponse, RoomSessionRefreshResponse } from "#contracts";
 import { CreateRoomDto } from "./dto/create-room.dto.js";
 import { JoinRoomDto } from "./dto/join-room.dto.js";
 import { RoomParamsDto } from "./dto/room-params.dto.js";
+import { SessionRefreshDto } from "./dto/session-refresh.dto.js";
 import { RoomsService } from "./rooms.service.js";
 
 const dtoValidationPipe = (expectedType: new () => object) =>
@@ -33,5 +34,13 @@ export class RoomsController {
     @Body(dtoValidationPipe(JoinRoomDto)) body: JoinRoomDto
   ): Promise<JoinRoomResponse> {
     return this.rooms.joinRoom(params.slug, body.displayName, body.creatorToken);
+  }
+
+  @Post(":slug/session/refresh")
+  refreshRoomSession(
+    @Param(dtoValidationPipe(RoomParamsDto)) params: RoomParamsDto,
+    @Body(dtoValidationPipe(SessionRefreshDto)) body: SessionRefreshDto
+  ): Promise<RoomSessionRefreshResponse> {
+    return this.rooms.refreshRoomSession(params.slug, body.participantId, body.roomSessionToken);
   }
 }

@@ -2,7 +2,7 @@ import { ConfigService } from "@nestjs/config";
 import { describe, expect, it } from "vitest";
 import type { RoomMetadata } from "#contracts";
 import { roomNotFound } from "./room-errors.js";
-import type { CreateRoomRecord } from "./room.repository.js";
+import type { CreateRoomRecord, RoomSessionRecord } from "./room.repository.js";
 import { RoomRepository } from "./room.repository.js";
 import { RoomTokenService } from "./room-token.service.js";
 import { RoomsService } from "./rooms.service.js";
@@ -11,6 +11,8 @@ class InMemoryRoomRepository extends RoomRepository {
   readonly rooms = new Map<string, RoomMetadata>();
   readonly slugs = new Map<string, string>();
   readonly participantCounts = new Map<string, number>();
+  readonly sessions = new Map<string, RoomSessionRecord>();
+
   async createRoom(record: CreateRoomRecord): Promise<RoomMetadata> {
     const room: RoomMetadata = { ...record, status: "active" };
     this.rooms.set(room.roomId, room);
@@ -33,6 +35,13 @@ class InMemoryRoomRepository extends RoomRepository {
     return this.participantCounts.get(roomId) ?? 0;
   }
 
+  async saveRoomSession(roomId: string, session: RoomSessionRecord): Promise<void> {
+    this.sessions.set(`${roomId}:${session.participantId}`, session);
+  }
+
+  async getRoomSession(roomId: string, participantId: string): Promise<RoomSessionRecord | undefined> {
+    return this.sessions.get(`${roomId}:${participantId}`);
+  }
 }
 
 function createService() {
@@ -78,6 +87,7 @@ describe("RoomsService", () => {
     expect(creatorJoin.isCreator).toBe(true);
     expect(guestJoin.isCreator).toBe(false);
     expect(creatorJoin.signalingUrl).toBe("ws://signaling.test/ws");
+    expect(creatorJoin.roomSessionToken).toEqual(expect.any(String));
   });
 
   it("returns the signaling URL assigned when the room was created", async () => {
@@ -140,5 +150,54 @@ describe("RoomsService", () => {
     expect(payload.displayName).toBe("Alex");
     expect(payload.isCreator).toBe(true);
     expect(payload.exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  });
+
+  it("refreshes a room session without creating a new participant identity", async () => {
+    const { service } = createService();
+    const room = await service.createRoom();
+    const join = await service.joinRoom(room.slug, " Alex ", room.creatorToken);
+
+    const refresh = await service.refreshRoomSession(room.slug, join.participantId, join.roomSessionToken);
+    const [, encodedPayload] = refresh.token.split(".");
+    const payload = JSON.parse(Buffer.from(encodedPayload ?? "", "base64url").toString("utf8")) as {
+      roomId: string;
+      participantId: string;
+      displayName: string;
+      isCreator: boolean;
+      exp: number;
+    };
+
+    expect(refresh.signalingUrl).toBe("ws://signaling.test/ws");
+    expect(payload.roomId).toBe(room.roomId);
+    expect(payload.participantId).toBe(join.participantId);
+    expect(payload.displayName).toBe("Alex");
+    expect(payload.isCreator).toBe(true);
+    expect(payload.exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  });
+
+  it("rejects refresh when the room session token is invalid", async () => {
+    const { service } = createService();
+    const room = await service.createRoom();
+    const join = await service.joinRoom(room.slug, "Alex", room.creatorToken);
+
+    await expect(service.refreshRoomSession(room.slug, join.participantId, "wrong-token")).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "INVALID_TOKEN" }),
+    });
+  });
+
+  it("rejects refresh for closed rooms", async () => {
+    const { repository, service } = createService();
+    const room = await service.createRoom();
+    const join = await service.joinRoom(room.slug, "Alex", room.creatorToken);
+    const stored = await repository.getRoomBySlug(room.slug);
+    repository.rooms.set(stored.roomId, {
+      ...stored,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      status: "closed",
+    });
+
+    await expect(service.refreshRoomSession(room.slug, join.participantId, join.roomSessionToken)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "ROOM_CLOSED" }),
+    });
   });
 });

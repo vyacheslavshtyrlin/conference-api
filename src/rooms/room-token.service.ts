@@ -22,12 +22,32 @@ export class RoomTokenService {
     return createHmac("sha256", this.creatorTokenSecret()).update(token).digest("base64url");
   }
 
+  createRoomSessionToken(): string {
+    return randomBytes(32).toString("base64url");
+  }
+
+  hashRoomSessionToken(token: string): string {
+    return createHmac("sha256", this.roomSessionTokenSecret()).update(token).digest("base64url");
+  }
+
   isCreatorTokenValid(token: string | undefined, expectedHash: string): boolean {
     if (!token) {
       return false;
     }
 
     const actualHash = this.hashCreatorToken(token);
+    const actual = Buffer.from(actualHash);
+    const expected = Buffer.from(expectedHash);
+
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+  }
+
+  isRoomSessionTokenValid(token: string | undefined, expectedHash: string): boolean {
+    if (!token) {
+      return false;
+    }
+
+    const actualHash = this.hashRoomSessionToken(token);
     const actual = Buffer.from(actualHash);
     const expected = Buffer.from(expectedHash);
 
@@ -53,6 +73,10 @@ export class RoomTokenService {
 
   private creatorTokenSecret(): string {
     return this.config.get<string>("CREATOR_TOKEN_SECRET") ?? this.joinTokenSecret();
+  }
+
+  private roomSessionTokenSecret(): string {
+    return this.config.get<string>("ROOM_SESSION_TOKEN_SECRET") ?? this.joinTokenSecret();
   }
 
   private joinTokenSecret(): string {

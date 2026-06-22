@@ -4,12 +4,14 @@ import type {
   CreateRoomResponse,
   GetRoomResponse,
   JoinRoomResponse,
+  RoomSessionRefreshResponse,
 } from "#contracts";
 import { MAX_ROOM_PARTICIPANTS } from "#contracts";
 import { randomBytes, randomUUID } from "node:crypto";
 import { RoomRepository } from "./room.repository.js";
 import { RoomTokenService } from "./room-token.service.js";
 import { roomClosed, roomFull } from "./room-errors.js";
+import { invalidToken } from "./room-errors.js";
 
 @Injectable()
 export class RoomsService {
@@ -75,6 +77,20 @@ export class RoomsService {
 
     const participantId = `peer_${randomUUID()}`;
     const isCreator = this.tokens.isCreatorTokenValid(creatorToken, room.creatorTokenHash);
+    const displayNameValue = displayName.trim();
+    const roomSessionToken = this.tokens.createRoomSessionToken();
+
+    await this.repository.saveRoomSession(
+      room.roomId,
+      {
+        participantId,
+        displayName: displayNameValue,
+        isCreator,
+        tokenHash: this.tokens.hashRoomSessionToken(roomSessionToken),
+        createdAt: new Date().toISOString(),
+      },
+      room.expiresAt
+    );
 
     return {
       participantId,
@@ -82,8 +98,35 @@ export class RoomsService {
       token: this.tokens.createJoinToken({
         roomId: room.roomId,
         participantId,
-        displayName: displayName.trim(),
+        displayName: displayNameValue,
         isCreator,
+      }),
+      roomSessionToken,
+      signalingUrl: room.signalingUrl,
+    };
+  }
+
+  async refreshRoomSession(
+    slug: string,
+    participantId: string,
+    roomSessionToken: string
+  ): Promise<RoomSessionRefreshResponse> {
+    const room = await this.repository.getRoomBySlug(slug);
+    if (room.status === "closed") {
+      throw roomClosed();
+    }
+
+    const session = await this.repository.getRoomSession(room.roomId, participantId);
+    if (!session || !this.tokens.isRoomSessionTokenValid(roomSessionToken, session.tokenHash)) {
+      throw invalidToken("Invalid room session token");
+    }
+
+    return {
+      token: this.tokens.createJoinToken({
+        roomId: room.roomId,
+        participantId: session.participantId,
+        displayName: session.displayName,
+        isCreator: session.isCreator,
       }),
       signalingUrl: room.signalingUrl,
     };

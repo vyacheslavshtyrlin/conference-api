@@ -14,10 +14,20 @@ export type CreateRoomRecord = {
   expiresAt: string | null;
 };
 
+export type RoomSessionRecord = {
+  participantId: string;
+  displayName: string;
+  isCreator: boolean;
+  tokenHash: string;
+  createdAt: string;
+};
+
 export abstract class RoomRepository {
   abstract createRoom(record: CreateRoomRecord): Promise<RoomMetadata>;
   abstract getRoomBySlug(slug: string): Promise<RoomMetadata>;
   abstract getParticipantCount(roomId: string): Promise<number>;
+  abstract saveRoomSession(roomId: string, session: RoomSessionRecord, roomExpiresAt: string | null): Promise<void>;
+  abstract getRoomSession(roomId: string, participantId: string): Promise<RoomSessionRecord | undefined>;
 }
 
 @Injectable()
@@ -75,6 +85,34 @@ export class RedisRoomRepository extends RoomRepository {
     return this.redis.hLen(`room:${roomId}:participants`);
   }
 
+  async saveRoomSession(roomId: string, session: RoomSessionRecord, roomExpiresAt: string | null): Promise<void> {
+    const parsed = parseRoomSession(session);
+    if (!parsed) {
+      throw roomNotFound();
+    }
+
+    const key = this.roomSessionsKey(roomId);
+    await this.redis.hSet(key, parsed.participantId, JSON.stringify(parsed));
+
+    const ttlMs = getTtlMilliseconds(roomExpiresAt);
+    if (ttlMs) {
+      await this.redis.pExpire(key, ttlMs);
+    }
+  }
+
+  async getRoomSession(roomId: string, participantId: string): Promise<RoomSessionRecord | undefined> {
+    const raw = await this.redis.hGet(this.roomSessionsKey(roomId), participantId);
+    if (!raw) {
+      return undefined;
+    }
+
+    try {
+      return parseRoomSession(JSON.parse(raw) as unknown);
+    } catch {
+      return undefined;
+    }
+  }
+
   private roomKey(roomId: string): string {
     return `room:${roomId}`;
   }
@@ -83,6 +121,50 @@ export class RedisRoomRepository extends RoomRepository {
     return `room_slug:${slug}`;
   }
 
+  private roomSessionsKey(roomId: string): string {
+    return `room:${roomId}:sessions`;
+  }
+
+}
+
+function parseRoomSession(value: unknown): RoomSessionRecord | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const session = {
+    participantId: value.participantId,
+    displayName: value.displayName,
+    isCreator: value.isCreator,
+    tokenHash: value.tokenHash,
+    createdAt: value.createdAt,
+  };
+
+  if (
+    typeof session.participantId !== "string" ||
+    session.participantId.length === 0 ||
+    typeof session.displayName !== "string" ||
+    session.displayName.trim().length === 0 ||
+    session.displayName.length > 80 ||
+    typeof session.isCreator !== "boolean" ||
+    typeof session.tokenHash !== "string" ||
+    session.tokenHash.length === 0 ||
+    typeof session.createdAt !== "string" ||
+    Number.isNaN(Date.parse(session.createdAt))
+  ) {
+    return undefined;
+  }
+
+  return session as RoomSessionRecord;
+}
+
+function getTtlMilliseconds(expiresAt: string | null): number | undefined {
+  if (!expiresAt) {
+    return undefined;
+  }
+
+  const ttlMs = new Date(expiresAt).getTime() - Date.now();
+  return ttlMs > 0 ? ttlMs : undefined;
 }
 
 function parseRoomMetadata(value: unknown): RoomMetadata | undefined {

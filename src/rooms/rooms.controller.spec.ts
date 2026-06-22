@@ -7,7 +7,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RoomMetadata } from "#contracts";
 import { roomNotFound } from "./room-errors.js";
-import type { CreateRoomRecord } from "./room.repository.js";
+import type { CreateRoomRecord, RoomSessionRecord } from "./room.repository.js";
 import { RoomRepository } from "./room.repository.js";
 import { RoomTokenService } from "./room-token.service.js";
 import { RoomsController } from "./rooms.controller.js";
@@ -17,6 +17,7 @@ class InMemoryRoomRepository extends RoomRepository {
   readonly rooms = new Map<string, RoomMetadata>();
   readonly slugs = new Map<string, string>();
   readonly participantCounts = new Map<string, number>();
+  readonly sessions = new Map<string, RoomSessionRecord>();
 
   async createRoom(record: CreateRoomRecord): Promise<RoomMetadata> {
     const room: RoomMetadata = { ...record, status: "active" };
@@ -38,6 +39,14 @@ class InMemoryRoomRepository extends RoomRepository {
 
   async getParticipantCount(roomId: string): Promise<number> {
     return this.participantCounts.get(roomId) ?? 0;
+  }
+
+  async saveRoomSession(roomId: string, session: RoomSessionRecord): Promise<void> {
+    this.sessions.set(`${roomId}:${session.participantId}`, session);
+  }
+
+  async getRoomSession(roomId: string, participantId: string): Promise<RoomSessionRecord | undefined> {
+    return this.sessions.get(`${roomId}:${participantId}`);
   }
 }
 
@@ -109,14 +118,16 @@ describe("RoomsController", () => {
         });
       });
 
-    await request(app.getHttpServer())
+    const creatorJoinResponse = await request(app.getHttpServer())
       .post(`/api/v1/rooms/${createResponse.body.slug}/join`)
       .send({ displayName: "Alex", creatorToken: createResponse.body.creatorToken })
       .expect(201)
       .expect(({ body }) => {
+        expect(body.participantId).toEqual(expect.any(String));
         expect(body.isCreator).toBe(true);
         expect(body.signalingUrl).toBe("ws://signaling.test/ws");
         expect(body.token).toEqual(expect.any(String));
+        expect(body.roomSessionToken).toEqual(expect.any(String));
       });
 
     await request(app.getHttpServer())
@@ -125,6 +136,19 @@ describe("RoomsController", () => {
       .expect(201)
       .expect(({ body }) => {
         expect(body.isCreator).toBe(false);
+        expect(body.roomSessionToken).toEqual(expect.any(String));
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/rooms/${createResponse.body.slug}/session/refresh`)
+      .send({
+        participantId: creatorJoinResponse.body.participantId,
+        roomSessionToken: creatorJoinResponse.body.roomSessionToken,
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.signalingUrl).toBe("ws://signaling.test/ws");
+        expect(body.token).toEqual(expect.any(String));
       });
   });
 

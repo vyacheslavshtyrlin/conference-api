@@ -1,4 +1,4 @@
-import { ConflictException, GoneException, NotFoundException } from "@nestjs/common";
+import { ConflictException, GoneException, NotFoundException, UnauthorizedException } from "@nestjs/common";
 
 export function roomNotFound() {
   return new NotFoundException({
@@ -25,5 +25,12 @@ export function roomFull() {
   return new ConflictException({
     code: "ROOM_FULL",
     message: "Room is full",
+  });
+}
+
+export function invalidToken(message = "Invalid token") {
+  return new UnauthorizedException({
+    code: "INVALID_TOKEN",
+    message,
   });
 }

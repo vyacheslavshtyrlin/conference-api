@@ -47,6 +47,7 @@ GET /api/v1/health
 | `JOIN_TOKEN_SECRET` | `replace-with-shared-secret` | Секрет подписи join token. Должен совпадать с `JOIN_TOKEN_SECRET` в media/signaling сервисе. |
 | `CREATOR_TOKEN_SECRET` | `replace-with-secret` | Опциональный отдельный секрет для creator token. Если не задан, используется логика приложения по умолчанию. |
 | `JOIN_TOKEN_TTL_SECONDS` | `300` | Время жизни join token в секундах. |
+| `ROOM_SESSION_TOKEN_SECRET` | `replace-with-secret` | Optional separate secret for hashing `roomSessionToken`. If unset, API falls back to `JOIN_TOKEN_SECRET`. |
 
 ## Production routing
 
