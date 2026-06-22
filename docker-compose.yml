@@ -1,8 +1,8 @@
-name: conference-api
+name: conference-be
 
 services:
   api:
-    image: ${API_IMAGE:-conference-api:local}
+    image: ${BE_IMAGE:-conference-be:local}
     build:
       context: .
       dockerfile: Dockerfile
@@ -19,3 +19,12 @@ services:
       JOIN_TOKEN_SECRET: ${JOIN_TOKEN_SECRET:?JOIN_TOKEN_SECRET is required}
       JOIN_TOKEN_TTL_SECONDS: ${JOIN_TOKEN_TTL_SECONDS:-300}
     restart: unless-stopped
+    networks:
+      default:
+      conference-net:
+        aliases:
+          - api
+
+networks:
+  conference-net:
+    external: true
