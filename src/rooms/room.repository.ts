@@ -9,14 +9,13 @@ export type CreateRoomRecord = {
   slug: string;
   mediaNodeId: string;
   signalingUrl: string;
-  creatorTokenHash: string;
   createdAt: string;
   expiresAt: string | null;
 };
 
 export type RoomSessionRecord = {
   participantId: string;
-  displayName: string;
+  displayName: string | null;
   isCreator: boolean;
   tokenHash: string;
   createdAt: string;
@@ -26,8 +25,10 @@ export abstract class RoomRepository {
   abstract createRoom(record: CreateRoomRecord): Promise<RoomMetadata>;
   abstract getRoomBySlug(slug: string): Promise<RoomMetadata>;
   abstract getParticipantCount(roomId: string): Promise<number>;
+  abstract hasLiveParticipant(roomId: string, participantId: string): Promise<boolean>;
   abstract saveRoomSession(roomId: string, session: RoomSessionRecord, roomExpiresAt: string | null): Promise<void>;
   abstract getRoomSession(roomId: string, participantId: string): Promise<RoomSessionRecord | undefined>;
+  abstract findRoomSessionByTokenHash(roomId: string, tokenHash: string): Promise<RoomSessionRecord | undefined>;
 }
 
 @Injectable()
@@ -86,6 +87,11 @@ export class RedisRoomRepository extends RoomRepository {
     return this.redis.hLen(`room:${roomId}:participants`);
   }
 
+  async hasLiveParticipant(roomId: string, participantId: string): Promise<boolean> {
+    const raw = await this.redis.hGet(`room:${roomId}:participants`, participantId);
+    return Boolean(raw);
+  }
+
   async saveRoomSession(roomId: string, session: RoomSessionRecord, roomExpiresAt: string | null): Promise<void> {
     const parsed = parseRoomSession(session);
     if (!parsed) {
@@ -112,6 +118,22 @@ export class RedisRoomRepository extends RoomRepository {
     } catch {
       return undefined;
     }
+  }
+
+  async findRoomSessionByTokenHash(roomId: string, tokenHash: string): Promise<RoomSessionRecord | undefined> {
+    const sessions = await this.redis.hVals(this.roomSessionsKey(roomId));
+    for (const raw of sessions) {
+      try {
+        const session = parseRoomSession(JSON.parse(raw) as unknown);
+        if (session?.tokenHash === tokenHash) {
+          return session;
+        }
+      } catch {
+        // Ignore malformed legacy session values.
+      }
+    }
+
+    return undefined;
   }
 
   private roomKey(roomId: string): string {
@@ -144,9 +166,12 @@ function parseRoomSession(value: unknown): RoomSessionRecord | undefined {
   if (
     typeof session.participantId !== "string" ||
     session.participantId.length === 0 ||
-    typeof session.displayName !== "string" ||
-    session.displayName.trim().length === 0 ||
-    session.displayName.length > 80 ||
+    !(
+      session.displayName === null ||
+      (typeof session.displayName === "string" &&
+        session.displayName.trim().length > 0 &&
+        session.displayName.length <= 80)
+    ) ||
     typeof session.isCreator !== "boolean" ||
     typeof session.tokenHash !== "string" ||
     session.tokenHash.length === 0 ||
@@ -178,7 +203,6 @@ function parseRoomMetadata(value: unknown): RoomMetadata | undefined {
     slug: value.slug,
     mediaNodeId: value.mediaNodeId,
     signalingUrl: value.signalingUrl,
-    creatorTokenHash: value.creatorTokenHash,
     createdAt: value.createdAt,
     expiresAt: value.expiresAt,
     status: value.status,
@@ -194,8 +218,6 @@ function parseRoomMetadata(value: unknown): RoomMetadata | undefined {
     room.mediaNodeId.length === 0 ||
     typeof room.signalingUrl !== "string" ||
     !isUrl(room.signalingUrl) ||
-    typeof room.creatorTokenHash !== "string" ||
-    room.creatorTokenHash.length === 0 ||
     typeof room.createdAt !== "string" ||
     Number.isNaN(Date.parse(room.createdAt)) ||
     !isExpiresAt(room.expiresAt) ||

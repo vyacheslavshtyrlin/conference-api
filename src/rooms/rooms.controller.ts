@@ -33,7 +33,7 @@ export class RoomsController {
     @Param(dtoValidationPipe(RoomParamsDto)) params: RoomParamsDto,
     @Body(dtoValidationPipe(JoinRoomDto)) body: JoinRoomDto
   ): Promise<JoinRoomResponse> {
-    return this.rooms.joinRoom(params.slug, body.displayName, body.creatorToken);
+    return this.rooms.joinRoom(params.slug, body.displayName, body.roomSessionToken);
   }
 
   @Post(":slug/session/refresh")

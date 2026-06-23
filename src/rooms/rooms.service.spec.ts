@@ -11,6 +11,7 @@ class InMemoryRoomRepository extends RoomRepository {
   readonly rooms = new Map<string, RoomMetadata>();
   readonly slugs = new Map<string, string>();
   readonly participantCounts = new Map<string, number>();
+  readonly liveParticipants = new Set<string>();
   readonly sessions = new Map<string, RoomSessionRecord>();
 
   async createRoom(record: CreateRoomRecord): Promise<RoomMetadata> {
@@ -35,12 +36,23 @@ class InMemoryRoomRepository extends RoomRepository {
     return this.participantCounts.get(roomId) ?? 0;
   }
 
+  async hasLiveParticipant(roomId: string, participantId: string): Promise<boolean> {
+    return this.liveParticipants.has(`${roomId}:${participantId}`);
+  }
+
   async saveRoomSession(roomId: string, session: RoomSessionRecord): Promise<void> {
     this.sessions.set(`${roomId}:${session.participantId}`, session);
   }
 
   async getRoomSession(roomId: string, participantId: string): Promise<RoomSessionRecord | undefined> {
     return this.sessions.get(`${roomId}:${participantId}`);
+  }
+
+  async findRoomSessionByTokenHash(roomId: string, tokenHash: string): Promise<RoomSessionRecord | undefined> {
+    return Array.from(this.sessions.entries())
+      .filter(([key]) => key.startsWith(`${roomId}:`))
+      .map(([, session]) => session)
+      .find((session) => session.tokenHash === tokenHash);
   }
 }
 
@@ -61,33 +73,68 @@ function createService() {
 }
 
 describe("RoomsService", () => {
-  it("creates a room with a public join URL and private creator token", async () => {
+  it("creates a room with a public join URL and private creator room session", async () => {
     const { repository, service } = createService();
 
     const room = await service.createRoom();
     const stored = await repository.getRoomBySlug(room.slug);
+    const storedSession = await repository.getRoomSession(room.roomId, room.participantId);
 
     expect(room.joinUrl).toBe(`http://web.test/r/${room.slug}`);
-    expect(room.joinUrl).not.toContain(room.creatorToken);
+    expect(room.joinUrl).not.toContain(room.roomSessionToken);
+    expect(room.participantId).toMatch(/^peer_/);
+    expect(room.roomSessionToken).toEqual(expect.any(String));
     expect(room.mediaNodeId).toBe("local");
     expect(room.signalingUrl).toBe("ws://signaling.test/ws");
-    expect(stored.creatorTokenHash).not.toBe(room.creatorToken);
     expect(stored.mediaNodeId).toBe("local");
     expect(stored.signalingUrl).toBe("ws://signaling.test/ws");
+    expect(storedSession).toMatchObject({
+      participantId: room.participantId,
+      displayName: null,
+      isCreator: true,
+    });
+    expect(storedSession?.tokenHash).not.toBe(room.roomSessionToken);
     expect(room.expiresAt).toBeNull();
   });
 
-  it("returns creator metadata only for a valid creator token", async () => {
+  it("returns creator metadata only for a valid room session token", async () => {
     const { service } = createService();
     const room = await service.createRoom();
 
-    const creatorJoin = await service.joinRoom(room.slug, "Alex", room.creatorToken);
+    const creatorJoin = await service.joinRoom(room.slug, "Alex", room.roomSessionToken);
     const guestJoin = await service.joinRoom(room.slug, "Sam");
 
     expect(creatorJoin.isCreator).toBe(true);
+    expect(creatorJoin.participantId).toBe(room.participantId);
+    expect(creatorJoin.roomSessionToken).toBe(room.roomSessionToken);
     expect(guestJoin.isCreator).toBe(false);
+    expect(guestJoin.participantId).not.toBe(room.participantId);
     expect(creatorJoin.signalingUrl).toBe("ws://signaling.test/ws");
     expect(creatorJoin.roomSessionToken).toEqual(expect.any(String));
+  });
+
+  it("rejects a pending creator room session when the room is already full", async () => {
+    const { repository, service } = createService();
+    const room = await service.createRoom();
+    repository.participantCounts.set(room.roomId, 10);
+
+    await expect(service.joinRoom(room.slug, "Alex", room.roomSessionToken)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "ROOM_FULL" }),
+    });
+  });
+
+  it("allows an existing live participant to refresh its join token when the room is full", async () => {
+    const { repository, service } = createService();
+    const room = await service.createRoom();
+    const firstJoin = await service.joinRoom(room.slug, "Alex", room.roomSessionToken);
+    repository.participantCounts.set(room.roomId, 10);
+    repository.liveParticipants.add(`${room.roomId}:${firstJoin.participantId}`);
+
+    const reconnectJoin = await service.joinRoom(room.slug, "Alex", firstJoin.roomSessionToken);
+
+    expect(reconnectJoin.participantId).toBe(firstJoin.participantId);
+    expect(reconnectJoin.isCreator).toBe(true);
+    expect(reconnectJoin.token).toEqual(expect.any(String));
   });
 
   it("returns the signaling URL assigned when the room was created", async () => {
@@ -100,7 +147,7 @@ describe("RoomsService", () => {
       signalingUrl: "wss://media-2.test/ws",
     });
 
-    const join = await service.joinRoom(room.slug, "Alex", room.creatorToken);
+    const join = await service.joinRoom(room.slug, "Alex", room.roomSessionToken);
 
     expect(join.signalingUrl).toBe("wss://media-2.test/ws");
   });
@@ -145,7 +192,7 @@ describe("RoomsService", () => {
       closedReason: "closed_by_creator",
     });
 
-    await expect(service.joinRoom(room.slug, "Alex", room.creatorToken)).rejects.toMatchObject({
+    await expect(service.joinRoom(room.slug, "Alex", room.roomSessionToken)).rejects.toMatchObject({
       response: expect.objectContaining({ code: "ROOM_CLOSED" }),
     });
   });
@@ -154,7 +201,7 @@ describe("RoomsService", () => {
     const { service } = createService();
     const room = await service.createRoom();
 
-    const join = await service.joinRoom(room.slug, "Alex", room.creatorToken);
+    const join = await service.joinRoom(room.slug, "Alex", room.roomSessionToken);
     const [, encodedPayload] = join.token.split(".");
     const payload = JSON.parse(Buffer.from(encodedPayload ?? "", "base64url").toString("utf8")) as {
       roomId: string;
@@ -174,7 +221,7 @@ describe("RoomsService", () => {
   it("refreshes a room session without creating a new participant identity", async () => {
     const { service } = createService();
     const room = await service.createRoom();
-    const join = await service.joinRoom(room.slug, " Alex ", room.creatorToken);
+    const join = await service.joinRoom(room.slug, " Alex ", room.roomSessionToken);
 
     const refresh = await service.refreshRoomSession(room.slug, join.participantId, join.roomSessionToken);
     const [, encodedPayload] = refresh.token.split(".");
@@ -197,7 +244,7 @@ describe("RoomsService", () => {
   it("rejects refresh when the room session token is invalid", async () => {
     const { service } = createService();
     const room = await service.createRoom();
-    const join = await service.joinRoom(room.slug, "Alex", room.creatorToken);
+    const join = await service.joinRoom(room.slug, "Alex", room.roomSessionToken);
 
     await expect(service.refreshRoomSession(room.slug, join.participantId, "wrong-token")).rejects.toMatchObject({
       response: expect.objectContaining({ code: "INVALID_TOKEN" }),
@@ -207,7 +254,7 @@ describe("RoomsService", () => {
   it("rejects refresh for closed rooms", async () => {
     const { repository, service } = createService();
     const room = await service.createRoom();
-    const join = await service.joinRoom(room.slug, "Alex", room.creatorToken);
+    const join = await service.joinRoom(room.slug, "Alex", room.roomSessionToken);
     const stored = await repository.getRoomBySlug(room.slug);
     repository.rooms.set(stored.roomId, {
       ...stored,

@@ -13,5 +13,5 @@ export class JoinRoomDto {
   @IsOptional()
   @IsString()
   @MinLength(1)
-  creatorToken?: string;
+  roomSessionToken?: string;
 }

@@ -14,32 +14,12 @@ type JoinTokenPayload = {
 export class RoomTokenService {
   constructor(@Inject(ConfigService) private readonly config: ConfigService) {}
 
-  createCreatorToken(): string {
-    return randomBytes(32).toString("base64url");
-  }
-
-  hashCreatorToken(token: string): string {
-    return createHmac("sha256", this.creatorTokenSecret()).update(token).digest("base64url");
-  }
-
   createRoomSessionToken(): string {
     return randomBytes(32).toString("base64url");
   }
 
   hashRoomSessionToken(token: string): string {
     return createHmac("sha256", this.roomSessionTokenSecret()).update(token).digest("base64url");
-  }
-
-  isCreatorTokenValid(token: string | undefined, expectedHash: string): boolean {
-    if (!token) {
-      return false;
-    }
-
-    const actualHash = this.hashCreatorToken(token);
-    const actual = Buffer.from(actualHash);
-    const expected = Buffer.from(expectedHash);
-
-    return actual.length === expected.length && timingSafeEqual(actual, expected);
   }
 
   isRoomSessionTokenValid(token: string | undefined, expectedHash: string): boolean {
@@ -69,10 +49,6 @@ export class RoomTokenService {
 
   private sign(input: string, secret: string): string {
     return createHmac("sha256", secret).update(input).digest("base64url");
-  }
-
-  private creatorTokenSecret(): string {
-    return this.config.get<string>("CREATOR_TOKEN_SECRET") ?? this.joinTokenSecret();
   }
 
   private roomSessionTokenSecret(): string {

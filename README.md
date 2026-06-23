@@ -45,7 +45,6 @@ GET /api/v1/health
 | `MEDIA_NODE_ID` | `media-1` | Логический id media node, к которой API привязывает новые комнаты. |
 | `SIGNALING_PUBLIC_URL` | `wss://conference.example.com/ws` | Browser-visible WebSocket URL signaling сервиса. Обычно идет через edge nginx. |
 | `JOIN_TOKEN_SECRET` | `replace-with-shared-secret` | Секрет подписи join token. Должен совпадать с `JOIN_TOKEN_SECRET` в media/signaling сервисе. |
-| `CREATOR_TOKEN_SECRET` | `replace-with-secret` | Опциональный отдельный секрет для creator token. Если не задан, используется логика приложения по умолчанию. |
 | `JOIN_TOKEN_TTL_SECONDS` | `300` | Время жизни join token в секундах. |
 | `ROOM_SESSION_TOKEN_SECRET` | `replace-with-secret` | Optional separate secret for hashing `roomSessionToken`. If unset, API falls back to `JOIN_TOKEN_SECRET`. |
 

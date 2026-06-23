@@ -24,7 +24,8 @@ export class RoomsService {
   async createRoom(): Promise<CreateRoomResponse> {
     const roomId = `room_${randomUUID()}`;
     const slug = this.createSlug();
-    const creatorToken = this.tokens.createCreatorToken();
+    const participantId = `peer_${randomUUID()}`;
+    const roomSessionToken = this.tokens.createRoomSessionToken();
     const createdAt = new Date();
     const mediaNode = this.selectMediaNode();
 
@@ -33,16 +34,28 @@ export class RoomsService {
       slug,
       mediaNodeId: mediaNode.mediaNodeId,
       signalingUrl: mediaNode.signalingUrl,
-      creatorTokenHash: this.tokens.hashCreatorToken(creatorToken),
       createdAt: createdAt.toISOString(),
       expiresAt: null,
     });
+
+    await this.repository.saveRoomSession(
+      room.roomId,
+      {
+        participantId,
+        displayName: null,
+        isCreator: true,
+        tokenHash: this.tokens.hashRoomSessionToken(roomSessionToken),
+        createdAt: createdAt.toISOString(),
+      },
+      room.expiresAt
+    );
 
     return {
       roomId: room.roomId,
       slug: room.slug,
       joinUrl: `${this.webPublicUrl()}/r/${room.slug}`,
-      creatorToken,
+      participantId,
+      roomSessionToken,
       mediaNodeId: room.mediaNodeId,
       signalingUrl: room.signalingUrl,
       expiresAt: room.expiresAt,
@@ -65,21 +78,38 @@ export class RoomsService {
     };
   }
 
-  async joinRoom(slug: string, displayName: string, creatorToken?: string): Promise<JoinRoomResponse> {
+  async joinRoom(slug: string, displayName: string, roomSessionToken?: string): Promise<JoinRoomResponse> {
     const room = await this.repository.getRoomBySlug(slug);
     if (room.status === "closed") {
       throw roomClosed();
     }
 
-    const count = await this.repository.getParticipantCount(room.roomId);
-    if (count >= MAX_ROOM_PARTICIPANTS) {
-      throw roomFull();
+    const displayNameValue = displayName.trim();
+    const existingSession = roomSessionToken
+      ? await this.repository.findRoomSessionByTokenHash(
+          room.roomId,
+          this.tokens.hashRoomSessionToken(roomSessionToken)
+        )
+      : undefined;
+
+    if (roomSessionToken && !existingSession) {
+      throw invalidToken("Invalid room session token");
     }
 
-    const participantId = `peer_${randomUUID()}`;
-    const isCreator = this.tokens.isCreatorTokenValid(creatorToken, room.creatorTokenHash);
-    const displayNameValue = displayName.trim();
-    const roomSessionToken = this.tokens.createRoomSessionToken();
+    const isExistingLiveParticipant = existingSession
+      ? await this.repository.hasLiveParticipant(room.roomId, existingSession.participantId)
+      : false;
+
+    if (!isExistingLiveParticipant) {
+      const count = await this.repository.getParticipantCount(room.roomId);
+      if (count >= MAX_ROOM_PARTICIPANTS) {
+        throw roomFull();
+      }
+    }
+
+    const participantId = existingSession?.participantId ?? `peer_${randomUUID()}`;
+    const isCreator = existingSession?.isCreator ?? false;
+    const nextRoomSessionToken = roomSessionToken ?? this.tokens.createRoomSessionToken();
 
     await this.repository.saveRoomSession(
       room.roomId,
@@ -87,8 +117,8 @@ export class RoomsService {
         participantId,
         displayName: displayNameValue,
         isCreator,
-        tokenHash: this.tokens.hashRoomSessionToken(roomSessionToken),
-        createdAt: new Date().toISOString(),
+        tokenHash: this.tokens.hashRoomSessionToken(nextRoomSessionToken),
+        createdAt: existingSession?.createdAt ?? new Date().toISOString(),
       },
       room.expiresAt
     );
@@ -102,7 +132,7 @@ export class RoomsService {
         displayName: displayNameValue,
         isCreator,
       }),
-      roomSessionToken,
+      roomSessionToken: nextRoomSessionToken,
       signalingUrl: room.signalingUrl,
     };
   }
@@ -118,7 +148,11 @@ export class RoomsService {
     }
 
     const session = await this.repository.getRoomSession(room.roomId, participantId);
-    if (!session || !this.tokens.isRoomSessionTokenValid(roomSessionToken, session.tokenHash)) {
+    if (
+      !session ||
+      !session.displayName ||
+      !this.tokens.isRoomSessionTokenValid(roomSessionToken, session.tokenHash)
+    ) {
       throw invalidToken("Invalid room session token");
     }
 
