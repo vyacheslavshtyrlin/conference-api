@@ -1,57 +1,108 @@
-# Conference API
+# Документация проекта conference-be
 
-Backend API сервиса видеоконференций. Это NestJS + TypeScript сервис, который отвечает за создание комнат, join flow, выдачу join token и хранение room metadata в Redis.
+Backend API сервиса видеоконференций. Стек: **NestJS 10 + TypeScript + Redis**.
+Отвечает за создание комнат, lookup, join flow и выдачу join-токенов. Room metadata и сессии хранит в Redis.
+Не занимается WebRTC/media plane — отдаёт клиенту публичный signaling URL и токены, а media-сервис обрабатывает WebSocket и mediasoup. Контракты API описаны **Zod** в `src/contracts/` и едины для всех сервисов.
 
-API не занимается WebRTC media plane напрямую. Для подключения клиента к конференции API возвращает публичный signaling URL и токены, а signaling/media сервис уже обрабатывает WebSocket и mediasoup.
+---
 
-## Команды
+## Порты
 
-```bash
-npm ci
-npm run dev
-npm run build
-npm run lint
-npm run typecheck
-npm run test
-```
+| Сервис / процесс | Порт | Где настраивается |
+| --- | --- | --- |
+| HTTP API (NestJS) | `3000` (внутр.) | `PORT`, `docker-compose.yml` проброс `API_PORT` |
+| Redis | `6379` (внешний сервис) | `REDIS_URL` (обычно на media-сервере) |
 
-Docker:
+Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`. Healthcheck: `GET /api/v1/health`.
 
-```bash
-docker compose --env-file .env.example config
-docker compose --env-file .env up -d --build
-docker compose --env-file .env down
-```
+---
 
-## HTTP
+## REST API (префикс `/api/v1`)
 
-Сервис слушает `PORT`, по умолчанию `3000`.
+| Метод | Путь | Назначение |
+| --- | --- | --- |
+| `GET` | `/health` | Health-проверка (`{status, service: "api"}`). |
+| `POST` | `/rooms` | Создать комнату → возвращает `slug`, `roomId`, `participantId`, `roomSessionToken`, `signalingUrl`, `mediaNodeId`. |
+| `GET` | `/rooms/:slug` | Метаданные комнаты: `status`, `expiresAt`, `closedReason`, `participantCount`, `signalingUrl`. |
+| `POST` | `/rooms/:slug/join` | Присоединиться: выдаёт `participantId`, `isCreator`, `token` (join), `roomSessionToken`, `signalingUrl`. |
+| `POST` | `/rooms/:slug/session/refresh` | Обновить join-токен по `participantId` + `roomSessionToken`. |
 
-Health endpoint:
+Создание комнаты **не создаёт** живого участника — создатель заходит только после явного Join. `isCreator` — метаданные, а не права хоста.
 
-```text
-GET /api/v1/health
-```
+---
 
 ## Переменные окружения
 
-| Переменная | Пример | Описание |
+| Переменная | Назначение |
+| --- | --- |
+| `NODE_ENV` | Режим выполнения (`production`). |
+| `PORT` | Порт HTTP API (по умолчанию `3000`). |
+| `REDIS_URL` | Redis для room metadata и сессий (обычно media-сервер). |
+| `WEB_PUBLIC_URL` | Публичный URL фронта (генерация ссылок и CORS origin). |
+| `MEDIA_NODE_ID` | Логический id media-ноды, к которой привязываются новые комнаты. |
+| `SIGNALING_PUBLIC_URL` | Browser-visible WebSocket URL signaling (`wss://…/ws`). |
+| `JOIN_TOKEN_SECRET` | Секрет подписи join-токена. **Должен совпадать** с `media`. |
+| `JOIN_TOKEN_TTL_SECONDS` | TTL join-токена (по умолчанию `300`). |
+| `ROOM_SESSION_TOKEN_SECRET` | Отдельный секрет для хэша `roomSessionToken` (если не задан — fallback на `JOIN_TOKEN_SECRET`). |
+| `API_IMAGE` | Docker-образ для `docker-compose.yml` (подставляется CI). |
+| `API_BIND_ADDR` / `API_PORT` | Внешний проброс порта (по умолчанию `127.0.0.1:3000`). |
+
+---
+
+## Структура `src/`
+
+### Корень
+| Файл | Что делает |
+| --- | --- |
+| `main.ts` | Bootstrap NestJS: глобальный префикс `api/v1`, CORS (origin = `WEB_PUBLIC_URL`), `ValidationPipe` (whitelist + transform), listen на `0.0.0.0:PORT`. |
+| `app.module.ts` | Корневой модуль: импортирует `ConfigModule`, `RedisModule`, `HealthModule`, `RoomsModule`. |
+| `contracts/index.ts` | Zod-схемы и TS-типы REST/WS-контрактов (rooms, participants, chat, WS-события, коды ошибок). Единый источник истины для формата API. |
+
+### `health/` — health-check
+| Файл | Что делает |
+| --- | --- |
+| `health.controller.ts` | `GET /health` → `{status: "ok", service: "api"}`. |
+| `health.module.ts` | Регистрация контроллера. |
+
+### `redis/` — инфраструктура Redis
+| Файл | Что делает |
+| --- | --- |
+| `redis.module.ts` | Создаёт Redis-клиент из `REDIS_URL`, экспортирует как глобальный провайдер `REDIS_CLIENT`. |
+| `redis.types.ts` | Интерфейс `RedisClient` (get/set/hSet/hLen/…/eval). |
+| `redis.constants.ts` | DI-токен `REDIS_CLIENT`. |
+
+### `rooms/` — основная фича
+| Файл | Что делает |
+| --- | --- |
+| `rooms.controller.ts` | Тонкие REST-эндпоинты (`POST /rooms`, `GET /rooms/:slug`, `POST .../join`, `POST .../session/refresh`) с валидацией DTO. |
+| `rooms.service.ts` | Бизнес-логика: создание комнаты (slug, mediaNode, signalingUrl), lookup, join (учёт `MAX_ROOM_PARTICIPANTS`, восстановление сессии по токену, выдача join-токена), refresh сессии. |
+| `room.repository.ts` | `RedisRoomRepository` (`abstract RoomRepository`): запись/чтение room metadata и сессий участников, подсчёт участников, проверка live-участника. Хранение только сериализуемых данных. |
+| `room-token.service.ts` | Генерация/верификация токенов: join-токен (JWT-подобный, HS256, с TTL) и `roomSessionToken` (HMAC-SHA256 хэш). |
+| `room-errors.ts` | HTTP-исключения с кодами: `ROOM_NOT_FOUND`, `ROOM_EXPIRED`, `ROOM_CLOSED`, `ROOM_FULL`, `INVALID_TOKEN`. |
+| `dto/create-room.dto.ts` | Тело запроса создания комнаты. |
+| `dto/join-room.dto.ts` | Тело join (`displayName`, `roomSessionToken?`). |
+| `dto/room-params.dto.ts` | Валидация `:slug`. |
+| `dto/session-refresh.dto.ts` | Тело refresh (`participantId`, `roomSessionToken`). |
+
+---
+
+## Ключи в Redis
+
+| Ключ | Тип | Назначение |
 | --- | --- | --- |
-| `NODE_ENV` | `production` | Режим выполнения Node.js приложения. Для сервера использовать `production`. |
-| `PORT` | `3000` | Порт HTTP API внутри контейнера/процесса. |
-| `API_IMAGE` | `registry.git.victory-crm.ru/conference/api:latest` | Docker image, который использует `docker-compose.yml` при деплое. |
-| `REDIS_URL` | `redis://10.0.0.12:6379` | Redis для room metadata, participants state и TTL. В двухсерверной модели обычно указывает на Redis на media server private IP. |
-| `WEB_PUBLIC_URL` | `https://conference.example.com` | Публичный URL фронтенда. Используется для генерации ссылок на комнаты и CORS origin. |
-| `MEDIA_NODE_ID` | `media-1` | Логический id media node, к которой API привязывает новые комнаты. |
-| `SIGNALING_PUBLIC_URL` | `wss://conference.example.com/ws` | Browser-visible WebSocket URL signaling сервиса. Обычно идет через edge nginx. |
-| `JOIN_TOKEN_SECRET` | `replace-with-shared-secret` | Секрет подписи join token. Должен совпадать с `JOIN_TOKEN_SECRET` в media/signaling сервисе. |
-| `JOIN_TOKEN_TTL_SECONDS` | `300` | Время жизни join token в секундах. |
-| `ROOM_SESSION_TOKEN_SECRET` | `replace-with-secret` | Optional separate secret for hashing `roomSessionToken`. If unset, API falls back to `JOIN_TOKEN_SECRET`. |
+| `room:{roomId}` | string | Метаданные комнаты (статус, expiresAt, signalingUrl…). |
+| `room_slug:{slug}` | string | Маппинг slug → roomId. |
+| `room:{roomId}:sessions` | hash | Сессии участников (`participantId` → запись с `tokenHash`, `isCreator`…). TTL по `expiresAt`. |
+| `room:{roomId}:participants` | hash | Живые участники (заполняется media-сервисом; API только читает `hLen`/`hGet`). |
 
-## Production routing
+---
 
-Внешний edge должен проксировать:
+## CI/CD
 
-```text
-https://domain/api/v1/ -> api:3000/api/v1/
-```
+`.gitlab-ci.yml` — pipeline на ветке `main`:
+1. **validate** — lint, typecheck, test, build.
+2. **build** — сборка Docker-образа (`--target production`), теги `<sha>` + `latest`.
+3. **deploy** — копирование `.env` (`DEPLOY_ENV_PROD` или `.env.example`), `docker compose up -d` (сеть `conference-net`).
+4. **cleanup** — prune контейнеров/образов старше 24ч.
+
+Runner: `158.160.25.200`. Продуктивная среда: `prod`.
