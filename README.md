@@ -75,10 +75,10 @@ Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`
 | Файл | Что делает |
 | --- | --- |
 | `rooms.controller.ts` | Тонкие REST-эндпоинты (`POST /rooms`, `GET /rooms/:slug`, `POST .../join`, `POST .../session/refresh`) с валидацией DTO. |
-| `rooms.service.ts` | Бизнес-логика: создание комнаты (slug, mediaNode, signalingUrl), lookup, join (учёт `MAX_ROOM_PARTICIPANTS`, восстановление сессии по токену, выдача join-токена), refresh сессии. |
+| `rooms.service.ts` | Бизнес-логика: создание комнаты (slug, mediaNode, signalingUrl), lookup, join (восстановление сессии по токену, выдача join-токена), refresh сессии. |
 | `room.repository.ts` | `RedisRoomRepository` (`abstract RoomRepository`): запись/чтение room metadata и сессий участников, подсчёт участников, проверка live-участника. Хранение только сериализуемых данных. |
 | `room-token.service.ts` | Генерация/верификация токенов: join-токен (JWT-подобный, HS256, с TTL) и `roomSessionToken` (HMAC-SHA256 хэш). |
-| `room-errors.ts` | HTTP-исключения с кодами: `ROOM_NOT_FOUND`, `ROOM_EXPIRED`, `ROOM_CLOSED`, `ROOM_FULL`, `INVALID_TOKEN`. |
+| `room-errors.ts` | HTTP-исключения с кодами: `ROOM_NOT_FOUND`, `ROOM_EXPIRED`, `ROOM_CLOSED`, `INVALID_TOKEN`. |
 | `dto/create-room.dto.ts` | Тело запроса создания комнаты. |
 | `dto/join-room.dto.ts` | Тело join (`displayName`, `roomSessionToken?`). |
 | `dto/room-params.dto.ts` | Валидация `:slug`. |

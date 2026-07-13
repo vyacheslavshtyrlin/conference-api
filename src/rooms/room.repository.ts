@@ -84,12 +84,19 @@ export class RedisRoomRepository extends RoomRepository {
   }
 
   async getParticipantCount(roomId: string): Promise<number> {
-    return this.redis.hLen(`room:${roomId}:participants`);
+    const currentEpoch = await this.getCurrentMediaEpoch();
+    if (!currentEpoch) {
+      return 0;
+    }
+
+    const values = await this.redis.hVals(`room:${roomId}:participants`);
+    return values.filter((value) => hasCurrentMediaEpoch(value, currentEpoch)).length;
   }
 
   async hasLiveParticipant(roomId: string, participantId: string): Promise<boolean> {
     const raw = await this.redis.hGet(`room:${roomId}:participants`, participantId);
-    return Boolean(raw);
+    const currentEpoch = await this.getCurrentMediaEpoch();
+    return Boolean(raw && currentEpoch && hasCurrentMediaEpoch(raw, currentEpoch));
   }
 
   async saveRoomSession(roomId: string, session: RoomSessionRecord, roomExpiresAt: string | null): Promise<void> {
@@ -146,6 +153,30 @@ export class RedisRoomRepository extends RoomRepository {
 
   private roomSessionsKey(roomId: string): string {
     return `room:${roomId}:sessions`;
+  }
+
+  private async getCurrentMediaEpoch(): Promise<string | undefined> {
+    const raw = await this.redis.get("media:lease");
+    if (!raw) {
+      return undefined;
+    }
+
+    try {
+      const value = JSON.parse(raw) as unknown;
+      if (
+        !isRecord(value) ||
+        typeof value.mediaEpoch !== "string" ||
+        value.mediaEpoch.length === 0 ||
+        typeof value.expiresAt !== "string" ||
+        Number.isNaN(Date.parse(value.expiresAt)) ||
+        Date.parse(value.expiresAt) <= Date.now()
+      ) {
+        return undefined;
+      }
+      return value.mediaEpoch;
+    } catch {
+      return undefined;
+    }
   }
 
 }
@@ -246,6 +277,15 @@ function isClosedReason(value: unknown): value is RoomMetadata["closedReason"] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function hasCurrentMediaEpoch(value: string, mediaEpoch: string): boolean {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isRecord(parsed) && parsed.mediaEpoch === mediaEpoch && isRecord(parsed.participant);
+  } catch {
+    return false;
+  }
 }
 
 function isUrl(value: string): boolean {

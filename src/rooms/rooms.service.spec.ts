@@ -113,17 +113,18 @@ describe("RoomsService", () => {
     expect(creatorJoin.roomSessionToken).toEqual(expect.any(String));
   });
 
-  it("rejects a pending creator room session when the room is already full", async () => {
+  it("issues a join token for a pending creator session regardless of the current room size", async () => {
     const { repository, service } = createService();
     const room = await service.createRoom();
     repository.participantCounts.set(room.roomId, 10);
 
-    await expect(service.joinRoom(room.slug, "Alex", room.roomSessionToken)).rejects.toMatchObject({
-      response: expect.objectContaining({ code: "ROOM_FULL" }),
+    await expect(service.joinRoom(room.slug, "Alex", room.roomSessionToken)).resolves.toMatchObject({
+      participantId: room.participantId,
+      isCreator: true,
     });
   });
 
-  it("allows an existing live participant to refresh its join token when the room is full", async () => {
+  it("preserves an existing live participant identity when issuing another join token", async () => {
     const { repository, service } = createService();
     const room = await service.createRoom();
     const firstJoin = await service.joinRoom(room.slug, "Alex", room.roomSessionToken);

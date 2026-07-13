@@ -6,11 +6,10 @@ import type {
   JoinRoomResponse,
   RoomSessionRefreshResponse,
 } from "#contracts";
-import { MAX_ROOM_PARTICIPANTS } from "#contracts";
 import { randomBytes, randomUUID } from "node:crypto";
 import { RoomRepository } from "./room.repository.js";
 import { RoomTokenService } from "./room-token.service.js";
-import { roomClosed, roomFull } from "./room-errors.js";
+import { roomClosed } from "./room-errors.js";
 import { invalidToken } from "./room-errors.js";
 
 @Injectable()
@@ -94,17 +93,6 @@ export class RoomsService {
 
     if (roomSessionToken && !existingSession) {
       throw invalidToken("Invalid room session token");
-    }
-
-    const isExistingLiveParticipant = existingSession
-      ? await this.repository.hasLiveParticipant(room.roomId, existingSession.participantId)
-      : false;
-
-    if (!isExistingLiveParticipant) {
-      const count = await this.repository.getParticipantCount(room.roomId);
-      if (count >= MAX_ROOM_PARTICIPANTS) {
-        throw roomFull();
-      }
     }
 
     const participantId = existingSession?.participantId ?? `peer_${randomUUID()}`;

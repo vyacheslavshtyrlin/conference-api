@@ -16,6 +16,7 @@
     "lint": "eslint .",
     "start": "node --conditions=production dist/src/main.js",
     "test": "vitest run --passWithNoTests",
+    "test:redis": "node -e \"if (!process.env.TEST_REDIS_URL) { console.error('TEST_REDIS_URL is required'); process.exit(1); }\" && vitest run src/rooms/room.repository.redis.spec.ts --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
