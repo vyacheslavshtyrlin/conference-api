@@ -1,4 +1,5 @@
 import { ConfigService } from "@nestjs/config";
+import { Test } from "@nestjs/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HealthController } from "../health/health.controller.js";
 
@@ -34,6 +35,21 @@ describe("RedisConnection", () => {
   beforeEach(() => {
     client = makeClient();
     createClient.mockReturnValue(client);
+  });
+
+  it("resolves ConfigService through Nest dependency injection", async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        RedisConnection,
+        {
+          provide: ConfigService,
+          useValue: new ConfigService({ REDIS_URL: "redis://redis.test:6379" }),
+        },
+      ],
+    }).compile();
+
+    expect(moduleRef.get(RedisConnection)).toBeInstanceOf(RedisConnection);
+    expect(createClient).toHaveBeenCalledWith({ url: "redis://redis.test:6379" });
   });
 
   it("does not block API boot or dependency-free liveness when Redis is initially unavailable", async () => {

@@ -1,4 +1,4 @@
-import { Injectable, type OnApplicationShutdown, type OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, type OnApplicationShutdown, type OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { createClient, type RedisClientType } from "redis";
 import { getApiMetrics } from "../observability/api-metrics.service.js";
@@ -10,7 +10,7 @@ export class RedisConnection implements OnModuleInit, OnApplicationShutdown {
   private readonly client: RedisClientType;
   private connectPromise: Promise<void> | undefined;
 
-  constructor(config: ConfigService) {
+  constructor(@Inject(ConfigService) config: ConfigService) {
     this.client = createClient({ url: config.getOrThrow<string>("REDIS_URL") });
     this.client.on("error", () => undefined);
   }
