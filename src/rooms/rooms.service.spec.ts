@@ -13,6 +13,7 @@ class InMemoryRoomRepository extends RoomRepository {
   readonly participantCounts = new Map<string, number>();
   readonly liveParticipants = new Set<string>();
   readonly sessions = new Map<string, RoomSessionRecord>();
+  readonly sessionExpiries = new Map<string, string | null>();
 
   async createRoom(record: CreateRoomRecord): Promise<RoomMetadata> {
     const room: RoomMetadata = { ...record, status: "active", closedReason: null };
@@ -40,8 +41,9 @@ class InMemoryRoomRepository extends RoomRepository {
     return this.liveParticipants.has(`${roomId}:${participantId}`);
   }
 
-  async saveRoomSession(roomId: string, session: RoomSessionRecord): Promise<void> {
+  async saveRoomSession(roomId: string, session: RoomSessionRecord, roomExpiresAt: string | null): Promise<void> {
     this.sessions.set(`${roomId}:${session.participantId}`, session);
+    this.sessionExpiries.set(`${roomId}:${session.participantId}`, roomExpiresAt);
   }
 
   async getRoomSession(roomId: string, participantId: string): Promise<RoomSessionRecord | undefined> {
@@ -88,13 +90,15 @@ describe("RoomsService", () => {
     expect(room.signalingUrl).toBe("ws://signaling.test/ws");
     expect(stored.mediaNodeId).toBe("local");
     expect(stored.signalingUrl).toBe("ws://signaling.test/ws");
+    expect(room.expiresAt).toEqual(expect.any(String));
+    expect(Date.parse(room.expiresAt ?? "")).toBeGreaterThan(Date.now());
+    expect(stored.expiresAt).toBe(room.expiresAt);
     expect(storedSession).toMatchObject({
       participantId: room.participantId,
       displayName: null,
       isCreator: true,
     });
     expect(storedSession?.tokenHash).not.toBe(room.roomSessionToken);
-    expect(room.expiresAt).toBeNull();
   });
 
   it("returns creator metadata only for a valid room session token", async () => {
@@ -122,6 +126,22 @@ describe("RoomsService", () => {
       participantId: room.participantId,
       isCreator: true,
     });
+  });
+
+  it("gives a new guest pending session its own deadline when the room is already live", async () => {
+    const { repository, service } = createService();
+    const room = await service.createRoom();
+    const stored = await repository.getRoomBySlug(room.slug);
+    repository.rooms.set(stored.roomId, {
+      ...stored,
+      expiresAt: null,
+    });
+
+    const join = await service.joinRoom(room.slug, "Sam");
+
+    const sessionExpiry = repository.sessionExpiries.get(`${room.roomId}:${join.participantId}`);
+    expect(sessionExpiry).toEqual(expect.any(String));
+    expect(Date.parse(sessionExpiry ?? "")).toBeGreaterThan(Date.now());
   });
 
   it("preserves an existing live participant identity when issuing another join token", async () => {

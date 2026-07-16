@@ -59,10 +59,17 @@ describeRealRedis("RedisRoomRepository with real Redis", () => {
     });
 
     const sessionKey = real.key(`room:${roomId}:sessions`);
+    const tokenIndexKey = real.key(`room_session_token:${tokenHash}`);
     expect(await real.raw.pTTL(sessionKey)).toBeGreaterThan(0);
+    expect(await real.raw.pTTL(tokenIndexKey)).toBeGreaterThan(0);
 
     const values = await real.raw.hVals(sessionKey);
     expect(JSON.stringify(values)).not.toContain(rawRoomSessionToken);
+    await expect(real.raw.get(tokenIndexKey)).resolves.toBe(JSON.stringify({ roomId, participantId: "peer_real_redis" }));
+    await expect(repository.findRoomSessionByTokenHash(roomId, tokenHash)).resolves.toMatchObject({
+      participantId: "peer_real_redis",
+      isCreator: true,
+    });
 
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(await real.raw.exists(sessionKey)).toBe(0);

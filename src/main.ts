@@ -1,22 +1,14 @@
 import "reflect-metadata";
 
-import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module.js";
+import { configureApiApplication } from "./bootstrap.js";
+import { validateApiConfig } from "./config/api-config.js";
 
-const port = Number(process.env.PORT ?? 3000);
+const config = validateApiConfig(process.env);
+const port = config.PORT;
 const app = await NestFactory.create(AppModule);
 
-app.setGlobalPrefix("api/v1");
-app.enableCors({
-  origin: process.env.WEB_PUBLIC_URL ?? "http://localhost:5173",
-});
-app.useGlobalPipes(
-  new ValidationPipe({
-    forbidNonWhitelisted: true,
-    transform: true,
-    whitelist: true,
-  })
-);
+configureApiApplication(app, config);
 
 await app.listen(port, "0.0.0.0");

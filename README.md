@@ -13,7 +13,8 @@ Backend API сервиса видеоконференций. Стек: **NestJS 
 | HTTP API (NestJS) | `3000` (внутр.) | `PORT`, `docker-compose.yml` проброс `API_PORT` |
 | Redis | `6379` (внешний сервис) | `REDIS_URL` (обычно на media-сервере) |
 
-Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`. Healthcheck: `GET /api/v1/health`.
+Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`. Operational endpoints:
+`GET /api/v1/health`, `GET /api/v1/ready`, `GET /api/v1/metrics`.
 
 ---
 
@@ -22,12 +23,16 @@ Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`
 | Метод | Путь | Назначение |
 | --- | --- | --- |
 | `GET` | `/health` | Health-проверка (`{status, service: "api"}`). |
+| `GET` | `/ready` | Readiness-проверка Redis с bounded timeout (`200`/`503`). |
+| `GET` | `/metrics` | Prometheus text exposition для operations scraping; не browser product API. |
 | `POST` | `/rooms` | Создать комнату → возвращает `slug`, `roomId`, `participantId`, `roomSessionToken`, `signalingUrl`, `mediaNodeId`. |
 | `GET` | `/rooms/:slug` | Метаданные комнаты: `status`, `expiresAt`, `closedReason`, `participantCount`, `signalingUrl`. |
 | `POST` | `/rooms/:slug/join` | Присоединиться: выдаёт `participantId`, `isCreator`, `token` (join), `roomSessionToken`, `signalingUrl`. |
 | `POST` | `/rooms/:slug/session/refresh` | Обновить join-токен по `participantId` + `roomSessionToken`. |
 
 Создание комнаты **не создаёт** живого участника — создатель заходит только после явного Join. `isCreator` — метаданные, а не права хоста.
+
+`/metrics` отдаёт агрегированные API HTTP, room-control, Redis operation и Node.js process метрики. Labels фиксированы и низкокардинальны; room IDs, participant IDs, request IDs, command IDs и токены не используются как labels.
 
 ---
 
@@ -93,6 +98,7 @@ Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`
 | `room:{roomId}` | string | Метаданные комнаты (статус, expiresAt, signalingUrl…). |
 | `room_slug:{slug}` | string | Маппинг slug → roomId. |
 | `room:{roomId}:sessions` | hash | Сессии участников (`participantId` → запись с `tokenHash`, `isCreator`…). TTL по `expiresAt`. |
+| `room_session_token:{hmac}` | string | Прямой индекс HMAC `roomSessionToken` → `{roomId, participantId}`. TTL совпадает с session. |
 | `room:{roomId}:participants` | hash | Живые участники (заполняется media-сервисом; API только читает `hLen`/`hGet`). |
 
 ---

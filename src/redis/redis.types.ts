@@ -1,4 +1,5 @@
 export type RedisClient = {
+  del(key: string): Promise<number>;
   get(key: string): Promise<string | null>;
   set(key: string, value: string): Promise<string | null>;
   setEx(key: string, seconds: number, value: string): Promise<string | null>;

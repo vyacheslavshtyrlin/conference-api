@@ -110,8 +110,9 @@ describe("RoomsController", () => {
       slug: expect.any(String),
       participantId: expect.stringMatching(/^peer_/),
       roomSessionToken: expect.any(String),
-      expiresAt: null,
+      expiresAt: expect.any(String),
     });
+    expect(Date.parse(createResponse.body.expiresAt)).toBeGreaterThan(Date.now());
     expect(createResponse.body.joinUrl).toBe(`http://web.test/r/${createResponse.body.slug}`);
     expect(createResponse.body.joinUrl).not.toContain(createResponse.body.roomSessionToken);
     expect(createResponse.body.mediaNodeId).toBe("local");

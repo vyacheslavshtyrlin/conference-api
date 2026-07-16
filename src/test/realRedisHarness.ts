@@ -29,6 +29,7 @@ export async function createRealRedisHarness(): Promise<RealRedisHarness> {
   const prefix = `conference:e6:${randomUUID()}`;
   const key = (value: string) => `${prefix}:${value}`;
   const redis: RedisClient = {
+    del: (value) => raw.del(key(value)),
     get: (value) => raw.get(key(value)),
     set: (value, data) => raw.set(key(value), data),
     setEx: (value, seconds, data) => raw.setEx(key(value), seconds, data),
