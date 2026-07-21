@@ -1,36 +1,16 @@
 import "reflect-metadata";
 
 import type { INestApplication } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AppModule } from "./app.module.js";
 import { configureSwaggerDocumentation } from "./swagger.js";
 
 describe("configureSwaggerDocumentation", () => {
   let app: INestApplication;
 
   beforeEach(async () => {
-    const moduleRef = await Test.createTestingModule({
-      imports: [AppModule],
-    })
-      .overrideProvider(ConfigService)
-      .useValue(
-        new ConfigService({
-          NODE_ENV: "test",
-          AUTH_COOKIE_ENABLED: false,
-          INTEGRATION_API_ENABLED: false,
-          AUTH_LOGIN_URL: null,
-          REDIS_URL: "redis://localhost:6379",
-          WEB_PUBLIC_URL: "http://localhost:5173",
-          MEDIA_NODE_ID: "local",
-          SIGNALING_PUBLIC_URL: "ws://localhost:4000/ws",
-          JOIN_TOKEN_SECRET: "test-secret",
-          JOIN_TOKEN_TTL_SECONDS: 300,
-        })
-      )
-      .compile();
+    const moduleRef = await Test.createTestingModule({}).compile();
 
     app = moduleRef.createNestApplication();
     app.setGlobalPrefix("api/v1");
