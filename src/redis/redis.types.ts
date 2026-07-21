@@ -8,5 +8,6 @@ export type RedisClient = {
   hSet(key: string, field: string, value: string): Promise<number>;
   hVals(key: string): Promise<string[]>;
   pExpire(key: string, milliseconds: number): Promise<boolean | number>;
+  pTTL(key: string): Promise<number>;
   eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown>;
 };

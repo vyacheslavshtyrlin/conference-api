@@ -46,6 +46,14 @@ Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`
 | `WEB_PUBLIC_URL` | Публичный URL фронта (генерация ссылок и CORS origin). |
 | `MEDIA_NODE_ID` | Логический id media-ноды, к которой привязываются новые комнаты. |
 | `SIGNALING_PUBLIC_URL` | Browser-visible WebSocket URL signaling (`wss://…/ws`). |
+| `AUTH_COOKIE_ENABLED` | Enables optional parent-domain trusted cookie identity for browser requests. Defaults to `false`; room creation remains available without it. |
+| `AUTH_COOKIE_NAME` | Trusted cookie name, default `conference_identity`. |
+| `AUTH_COOKIE_JWT_ISSUER` / `AUTH_COOKIE_JWT_AUDIENCE` / `AUTH_COOKIE_JWT_HS256_SECRET` | Required when `AUTH_COOKIE_ENABLED=true`. |
+| `INTEGRATION_API_ENABLED` | Enables service-JWT integration room/admission endpoints. |
+| `INTEGRATION_JWT_CREDENTIALS_JSON` | Required when `INTEGRATION_API_ENABLED=true`: JSON registry of independent `{ integrationId, issuer, audience, hs256Secret }` service-JWT credentials. A token identity claim must equal its configured `integrationId`; each signing secret must be unique. |
+| `INTEGRATION_JWT_MAX_TTL_SECONDS` | Maximum accepted service-JWT lifetime; defaults to 900 seconds. |
+| `INTEGRATION_RATE_LIMIT_WINDOW_SECONDS` / `INTEGRATION_RATE_LIMIT_MAX_REQUESTS` | Integration service rate-limit window and request count. |
+| `AUTH_LOGIN_URL` | Optional login URL shown by auth-capable frontend flows. |
 | `JOIN_TOKEN_SECRET` | Секрет подписи join-токена. **Должен совпадать** с `media`. |
 | `JOIN_TOKEN_TTL_SECONDS` | TTL join-токена (по умолчанию `300`). |
 | `ROOM_SESSION_TOKEN_SECRET` | Отдельный секрет для хэша `roomSessionToken` (если не задан — fallback на `JOIN_TOKEN_SECRET`). |

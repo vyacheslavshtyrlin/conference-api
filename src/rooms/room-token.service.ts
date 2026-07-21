@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type { ApiConfig } from "../config/api-config.js";
 
 type JoinTokenPayload = {
   roomId: string;
@@ -12,10 +13,18 @@ type JoinTokenPayload = {
 
 @Injectable()
 export class RoomTokenService {
-  constructor(@Inject(ConfigService) private readonly config: ConfigService) {}
+  constructor(@Inject(ConfigService) private readonly config: ConfigService<ApiConfig, true>) {}
 
   createRoomSessionToken(): string {
     return randomBytes(32).toString("base64url");
+  }
+
+  createAdmissionCode(): string {
+    return randomBytes(32).toString("base64url");
+  }
+
+  hashAdmissionCode(code: string): string {
+    return createHash("sha256").update(code).digest("base64url");
   }
 
   hashRoomSessionToken(token: string): string {
@@ -52,15 +61,15 @@ export class RoomTokenService {
   }
 
   private roomSessionTokenSecret(): string {
-    return this.config.get<string>("ROOM_SESSION_TOKEN_SECRET") ?? this.joinTokenSecret();
+    return this.config.get("ROOM_SESSION_TOKEN_SECRET", { infer: true }) ?? this.joinTokenSecret();
   }
 
   private joinTokenSecret(): string {
-    return this.config.get<string>("JOIN_TOKEN_SECRET") ?? "change-me-for-local-development";
+    return this.config.get("JOIN_TOKEN_SECRET", { infer: true });
   }
 
   private joinTokenTtlSeconds(): number {
-    const raw = Number(this.config.get<string>("JOIN_TOKEN_TTL_SECONDS") ?? 300);
+    const raw = Number(this.config.get("JOIN_TOKEN_TTL_SECONDS", { infer: true }));
     return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 300;
   }
 }

@@ -2,10 +2,23 @@ import { Injectable } from "@nestjs/common";
 
 type MetricLabels = Record<string, string>;
 type MetricOutcome = "success" | "error";
-type RoomControlOperation = "create_room" | "get_room" | "join_room" | "refresh_room_session";
+type RoomControlOperation =
+  | "create_room"
+  | "get_room"
+  | "join_room"
+  | "refresh_room_session"
+  | "create_join_request"
+  | "join_request_status"
+  | "list_join_requests"
+  | "create_room_admission"
+  | "decide_join_request"
+  | "integration_create_room"
+  | "integration_create_admission"
+  | "admission_exchange";
 type RedisOperation =
   | "create_room_metadata"
   | "create_room_slug"
+  | "create_room_atomic"
   | "expire_room_metadata"
   | "expire_room_slug"
   | "get_room_slug"
@@ -20,6 +33,14 @@ type RedisOperation =
   | "get_room_session"
   | "find_room_session_by_token_hash"
   | "get_room_session_by_token_index"
+  | "get_room_session_token_index_ttl"
+  | "get_integration_room_owner"
+  | "create_admission_atomic"
+  | "consume_admission_atomic"
+  | "save_join_request"
+  | "expire_join_requests"
+  | "get_join_request"
+  | "list_join_requests"
   | "read_media_lease"
   | "readiness_ping";
 
@@ -276,6 +297,18 @@ function routeLabel(path: string): string {
   }
   if (/^\/api\/v1\/rooms\/[^/]+\/join$/.test(trimmed)) {
     return "/api/v1/rooms/:slug/join";
+  }
+  if (/^\/api\/v1\/rooms\/[^/]+\/join-requests$/.test(trimmed)) {
+    return "/api/v1/rooms/:slug/join-requests";
+  }
+  if (/^\/api\/v1\/rooms\/[^/]+\/admissions$/.test(trimmed)) {
+    return "/api/v1/rooms/:slug/admissions";
+  }
+  if (/^\/api\/v1\/rooms\/[^/]+\/join-requests\/[^/]+\/status$/.test(trimmed)) {
+    return "/api/v1/rooms/:slug/join-requests/:requestId/status";
+  }
+  if (/^\/api\/v1\/rooms\/[^/]+\/join-requests\/[^/]+\/(approve|deny)$/.test(trimmed)) {
+    return "/api/v1/rooms/:slug/join-requests/:requestId/:decision";
   }
   if (/^\/api\/v1\/rooms\/[^/]+\/session\/refresh$/.test(trimmed)) {
     return "/api/v1/rooms/:slug/session/refresh";

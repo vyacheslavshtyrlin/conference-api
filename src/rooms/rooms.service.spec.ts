@@ -1,8 +1,16 @@
 import { ConfigService } from "@nestjs/config";
 import { describe, expect, it } from "vitest";
 import type { RoomMetadata } from "#contracts";
+import { validateApiConfig, type ApiConfig } from "../config/api-config.js";
 import { roomNotFound } from "./room-errors.js";
-import type { CreateRoomRecord, RoomSessionRecord } from "./room.repository.js";
+import type {
+  AdmissionRecord,
+  ConsumeAdmissionCommand,
+  CreateRoomRecord,
+  IntegrationRoomOwnerRecord,
+  JoinRequestRecord,
+  RoomSessionRecord,
+} from "./room.repository.js";
 import { RoomRepository } from "./room.repository.js";
 import { RoomTokenService } from "./room-token.service.js";
 import { RoomsService } from "./rooms.service.js";
@@ -14,9 +22,11 @@ class InMemoryRoomRepository extends RoomRepository {
   readonly liveParticipants = new Set<string>();
   readonly sessions = new Map<string, RoomSessionRecord>();
   readonly sessionExpiries = new Map<string, string | null>();
+  readonly joinRequests = new Map<string, JoinRequestRecord>();
+  readonly admissions = new Map<string, AdmissionRecord>();
 
   async createRoom(record: CreateRoomRecord): Promise<RoomMetadata> {
-    const room: RoomMetadata = { ...record, status: "active", closedReason: null };
+    const room: RoomMetadata = { ...record, accessPolicy: record.accessPolicy ?? "link", status: "active", closedReason: null };
     this.rooms.set(room.roomId, room);
     this.slugs.set(room.slug, room.roomId);
     return room;
@@ -31,6 +41,69 @@ class InMemoryRoomRepository extends RoomRepository {
     }
 
     return room;
+  }
+
+  async getRoomById(roomId: string): Promise<RoomMetadata> {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      throw roomNotFound();
+    }
+    return room;
+  }
+
+  async getIntegrationRoomOwner(): Promise<IntegrationRoomOwnerRecord | undefined> {
+    return undefined;
+  }
+
+  async createAdmission(record: AdmissionRecord): Promise<void> {
+    this.admissions.set(record.codeHash, record);
+  }
+
+  async consumeAdmission(_command: ConsumeAdmissionCommand): Promise<{ room: RoomMetadata; session: RoomSessionRecord }> {
+    throw new Error("Not used by room service tests");
+  }
+
+  async createJoinRequest(record: JoinRequestRecord): Promise<void> {
+    this.joinRequests.set(`${record.roomId}:${record.requestId}`, record);
+  }
+
+  async getJoinRequest(roomId: string, requestId: string): Promise<JoinRequestRecord | undefined> {
+    return this.joinRequests.get(`${roomId}:${requestId}`);
+  }
+
+  async listPendingJoinRequests(roomId: string): Promise<JoinRequestRecord[]> {
+    return Array.from(this.joinRequests.values()).filter(
+      (request) => request.roomId === roomId && request.status === "pending" && Date.parse(request.expiresAt) > Date.now()
+    );
+  }
+
+  async decideJoinRequest(
+    roomId: string,
+    requestId: string,
+    status: "approved" | "denied",
+    decidedByParticipantId: string
+  ): Promise<JoinRequestRecord> {
+    const request = this.joinRequests.get(`${roomId}:${requestId}`);
+    if (!request) throw roomNotFound();
+    const next = { ...request, status, decidedByParticipantId, decidedAt: new Date().toISOString() };
+    this.joinRequests.set(`${roomId}:${requestId}`, next);
+    return next;
+  }
+
+  async fulfillApprovedJoinRequest(
+    roomId: string,
+    requestId: string,
+    participantId: string,
+    tokenHash: string,
+    session: RoomSessionRecord,
+    sessionExpiresAt: string | null
+  ): Promise<JoinRequestRecord> {
+    const request = this.joinRequests.get(`${roomId}:${requestId}`);
+    if (!request) throw roomNotFound();
+    const next = { ...request, approvedParticipantId: participantId, approvedTokenHash: tokenHash };
+    this.joinRequests.set(`${roomId}:${requestId}`, next);
+    await this.saveRoomSession(roomId, session, sessionExpiresAt);
+    return next;
   }
 
   async getParticipantCount(roomId: string): Promise<number> {
@@ -58,13 +131,15 @@ class InMemoryRoomRepository extends RoomRepository {
   }
 }
 
-function createService() {
+function createService(overrides: NodeJS.ProcessEnv = {}) {
   const repository = new InMemoryRoomRepository();
-  const config = new ConfigService({
+  const config = new ConfigService<ApiConfig, true>(validateApiConfig({
+    NODE_ENV: "test",
     JOIN_TOKEN_SECRET: "test-secret",
     WEB_PUBLIC_URL: "http://web.test",
     SIGNALING_PUBLIC_URL: "ws://signaling.test/ws",
-  });
+    ...overrides,
+  }));
   const tokenService = new RoomTokenService(config);
 
   return {
@@ -73,6 +148,13 @@ function createService() {
     tokenService,
   };
 }
+
+const trustedCookieIdentity = {
+  kind: "authenticated" as const,
+  source: "trusted_cookie" as const,
+  externalSubject: "users:42",
+  displayName: "Trusted User",
+};
 
 describe("RoomsService", () => {
   it("creates a room with a public join URL and private creator room session", async () => {
@@ -115,6 +197,71 @@ describe("RoomsService", () => {
     expect(guestJoin.participantId).not.toBe(room.participantId);
     expect(creatorJoin.signalingUrl).toBe("ws://signaling.test/ws");
     expect(creatorJoin.roomSessionToken).toEqual(expect.any(String));
+  });
+
+  it("requires creator approval before a guest can join a private room", async () => {
+    const { service } = createService();
+    const room = await service.createRoom({ accessPolicy: "approval" });
+
+    await expect(service.joinRoom(room.slug, "Sam")).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "APPROVAL_REQUIRED" }),
+    });
+
+    const request = await service.createJoinRequest(room.slug, "Sam");
+    await expect(service.listJoinRequests(room.slug, room.participantId, room.roomSessionToken)).resolves.toMatchObject({
+      requests: [{ requestId: request.requestId, displayName: "Sam" }],
+    });
+    await expect(
+      service.decideJoinRequest(room.slug, request.requestId, room.participantId, room.roomSessionToken, "approve")
+    ).resolves.toMatchObject({ requestId: request.requestId, status: "approved" });
+
+    const status = await service.getJoinRequestStatus(room.slug, request.requestId, request.requestToken);
+    expect(status).toMatchObject({
+      requestId: request.requestId,
+      status: "approved",
+      displayName: "Sam",
+      isCreator: false,
+      participantId: expect.stringMatching(/^peer_/),
+      roomSessionToken: expect.any(String),
+    });
+
+    await expect(service.joinRoom(room.slug, "Sam", status.roomSessionToken)).resolves.toMatchObject({
+      participantId: status.participantId,
+      isCreator: false,
+      roomSessionToken: status.roomSessionToken,
+      token: expect.any(String),
+    });
+  });
+
+  it("lets a private room creator issue a one-time room admission entry link", async () => {
+    const { repository, service, tokenService } = createService();
+    const room = await service.createRoom({ accessPolicy: "approval" });
+
+    const admission = await service.createRoomAdmission(room.slug, room.participantId, room.roomSessionToken);
+    const code = new URL(admission.entryUrl).hash.replace("#code=", "");
+    const stored = repository.admissions.get(tokenService.hashAdmissionCode(code));
+
+    expect(admission.entryUrl).toMatch(new RegExp(`^http://web\\.test/r/${room.slug}#code=`));
+    expect(admission.entryUrl).not.toContain(room.roomSessionToken);
+    expect(stored).toMatchObject({
+      roomId: room.roomId,
+      identity: {
+        kind: "guest",
+        source: "room_admission",
+      },
+      roomControls: "none",
+      expiresAt: admission.expiresAt,
+    });
+    expect(stored?.integrationId).toBeUndefined();
+  });
+
+  it("does not issue room admission links for public rooms", async () => {
+    const { service } = createService();
+    const room = await service.createRoom({ accessPolicy: "link" });
+
+    await expect(service.createRoomAdmission(room.slug, room.participantId, room.roomSessionToken)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "APPROVAL_REQUIRED" }),
+    });
   });
 
   it("issues a join token for a pending creator session regardless of the current room size", async () => {
@@ -237,6 +384,117 @@ describe("RoomsService", () => {
     expect(payload.displayName).toBe("Alex");
     expect(payload.isCreator).toBe(true);
     expect(payload.exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  });
+
+  it("preserves an admission-backed trusted display name when Join sends a different browser name", async () => {
+    const { repository, service, tokenService } = createService();
+    const room = await service.createRoom();
+    const rawAdmissionSessionToken = tokenService.createRoomSessionToken();
+    const participantId = "peer_admission";
+    await repository.saveRoomSession(
+      room.roomId,
+      {
+        participantId,
+        displayName: "Trusted Participant",
+        isCreator: true,
+        tokenHash: tokenService.hashRoomSessionToken(rawAdmissionSessionToken),
+        createdAt: new Date().toISOString(),
+        identity: {
+          kind: "authenticated",
+          source: "integration_admission",
+          integrationId: "crm-alpha",
+          externalSubject: "crm-user-42",
+        },
+      },
+      room.expiresAt
+    );
+
+    const join = await service.joinRoom(room.slug, "Spoofed Browser Name", rawAdmissionSessionToken);
+    const [, encodedPayload] = join.token.split(".");
+    const payload = JSON.parse(Buffer.from(encodedPayload ?? "", "base64url").toString("utf8")) as {
+      displayName: string;
+      participantId: string;
+      isCreator: boolean;
+    };
+    const storedSession = await repository.getRoomSession(room.roomId, participantId);
+
+    expect(join).toMatchObject({ participantId, isCreator: true });
+    expect(payload).toMatchObject({
+      participantId,
+      displayName: "Trusted Participant",
+      isCreator: true,
+    });
+    expect(storedSession).toMatchObject({
+      displayName: "Trusted Participant",
+      identity: {
+        source: "integration_admission",
+        externalSubject: "crm-user-42",
+      },
+    });
+  });
+
+  it("stores trusted identity on the creator session when cookie auth resolves one", async () => {
+    const { repository, service } = createService();
+    const room = await service.createRoom({ accessPolicy: "approval" }, trustedCookieIdentity);
+    const storedSession = await repository.getRoomSession(room.roomId, room.participantId);
+
+    expect(room.displayName).toBe("Trusted User");
+    expect(storedSession).toMatchObject({
+      displayName: "Trusted User",
+      identity: {
+        kind: "authenticated",
+        source: "trusted_cookie",
+        externalSubject: "users:42",
+      },
+    });
+
+    const join = await service.joinRoom(room.slug, "Spoofed Name", room.roomSessionToken);
+    const [, encodedPayload] = join.token.split(".");
+    const payload = JSON.parse(Buffer.from(encodedPayload ?? "", "base64url").toString("utf8")) as {
+      displayName: string;
+    };
+    expect(payload.displayName).toBe("Trusted User");
+  });
+
+  it("allows anonymous browser room creation and guest joins without auth cookie configuration", async () => {
+    const { service } = createService();
+    const room = await service.createRoom();
+
+    await expect(service.joinRoom(room.slug, "Guest")).resolves.toMatchObject({
+      isCreator: false,
+      participantId: expect.stringMatching(/^peer_/),
+    });
+  });
+
+  it("preserves trusted-cookie identity through private approval requests", async () => {
+    const { repository, service } = createService();
+    const room = await service.createRoom({ accessPolicy: "approval" });
+    const request = await service.createJoinRequest(room.slug, "Browser Name", trustedCookieIdentity);
+    const storedRequest = await repository.getJoinRequest(room.roomId, request.requestId);
+
+    expect(request.displayName).toBe("Trusted User");
+    expect(storedRequest).toMatchObject({
+      displayName: "Trusted User",
+      identity: {
+        kind: "authenticated",
+        source: "trusted_cookie",
+        externalSubject: "users:42",
+      },
+    });
+
+    await service.decideJoinRequest(room.slug, request.requestId, room.participantId, room.roomSessionToken, "approve");
+    const status = await service.getJoinRequestStatus(room.slug, request.requestId, request.requestToken);
+    const join = await service.joinRoom(room.slug, "Spoofed After Approval", status.roomSessionToken);
+    const storedSession = await repository.getRoomSession(room.roomId, join.participantId);
+
+    expect(join.participantId).toBe(status.participantId);
+    expect(storedSession).toMatchObject({
+      displayName: "Trusted User",
+      identity: {
+        source: "trusted_cookie",
+        externalSubject: "users:42",
+      },
+    });
   });
 
   it("refreshes a room session without creating a new participant identity", async () => {

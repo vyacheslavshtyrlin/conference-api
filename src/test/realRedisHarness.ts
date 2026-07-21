@@ -38,6 +38,7 @@ export async function createRealRedisHarness(): Promise<RealRedisHarness> {
     hSet: (value, field, data) => raw.hSet(key(value), field, data),
     hVals: (value) => raw.hVals(key(value)),
     pExpire: (value, milliseconds) => raw.pExpire(key(value), milliseconds),
+    pTTL: (value) => raw.pTTL(key(value)),
     eval: (script, options) => raw.eval(script, {
       ...options,
       keys: options.keys.map(key),

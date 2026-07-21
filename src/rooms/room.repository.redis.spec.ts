@@ -6,6 +6,17 @@ import { RedisRoomRepository } from "./room.repository.js";
 import { RoomTokenService } from "./room-token.service.js";
 
 const describeRealRedis = realRedisTestsEnabled() ? describe : describe.skip;
+const waitForKeyToDisappear = async (harness: RealRedisHarness, key: string): Promise<void> => {
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    if ((await harness.raw.exists(key)) === 0) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  throw new Error(`Timed out waiting for Redis key to expire: ${key}`);
+};
 
 describeRealRedis("RedisRoomRepository with real Redis", () => {
   let harness: RealRedisHarness | undefined;
@@ -34,7 +45,7 @@ describeRealRedis("RedisRoomRepository with real Redis", () => {
     const tokenService = new RoomTokenService(new ConfigService({ ROOM_SESSION_TOKEN_SECRET: "test-room-session-secret" }));
     const rawRoomSessionToken = tokenService.createRoomSessionToken();
     const tokenHash = tokenService.hashRoomSessionToken(rawRoomSessionToken);
-    const expiresAt = new Date(Date.now() + 250).toISOString();
+    const expiresAt = new Date(Date.now() + 1_000).toISOString();
 
     await repository.createRoom({
       roomId,
@@ -71,8 +82,7 @@ describeRealRedis("RedisRoomRepository with real Redis", () => {
       isCreator: true,
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(await real.raw.exists(sessionKey)).toBe(0);
+    await waitForKeyToDisappear(real, sessionKey);
 
     await real.cleanup();
     const remaining: string[] = [];

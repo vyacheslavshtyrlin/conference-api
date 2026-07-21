@@ -1,4 +1,4 @@
-import { GoneException, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { ForbiddenException, GoneException, NotFoundException, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 
 export function roomNotFound() {
   return new NotFoundException({
@@ -25,5 +25,19 @@ export function invalidToken(message = "Invalid token") {
   return new UnauthorizedException({
     code: "INVALID_TOKEN",
     message,
+  });
+}
+
+export function approvalRequired() {
+  return new ForbiddenException({
+    code: "APPROVAL_REQUIRED",
+    message: "Room requires creator approval",
+  });
+}
+
+export function authNotConfigured() {
+  return new ServiceUnavailableException({
+    code: "AUTH_NOT_CONFIGURED",
+    message: "Trusted cookie authentication is not configured",
   });
 }
