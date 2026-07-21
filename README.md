@@ -1,8 +1,8 @@
 # Документация проекта conference-be
 
 Backend API сервиса видеоконференций. Стек: **NestJS 10 + TypeScript + Redis**.
-Отвечает за создание комнат, lookup, join flow и выдачу join-токенов. Room metadata и сессии хранит в Redis.
-Не занимается WebRTC/media plane — отдаёт клиенту публичный signaling URL и токены, а media-сервис обрабатывает WebSocket и mediasoup. Контракты API описаны **Zod** в `src/contracts/` и едины для всех сервисов.
+Отвечает за HTTP control plane: комнаты, browser admission flow, room-session/join tokens, app-config и server-to-server интеграции. Room metadata и сессии хранит в Redis.
+Не занимается WebRTC/media plane — отдаёт клиенту публичный signaling URL и токены, а media-сервис обрабатывает WebSocket и mediasoup. Канонические HTTP, WebSocket, Redis и lifecycle-контракты находятся в [`../docs/contracts.md`](../docs/contracts.md); Zod-схемы в `src/contracts/` реализуют API-границу.
 
 ---
 
@@ -13,24 +13,36 @@ Backend API сервиса видеоконференций. Стек: **NestJS 
 | HTTP API (NestJS) | `3000` (внутр.) | `PORT`, `docker-compose.yml` проброс `API_PORT` |
 | Redis | `6379` (внешний сервис) | `REDIS_URL` (обычно на media-сервере) |
 
-Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`. Operational endpoints:
-`GET /api/v1/health`, `GET /api/v1/ready`, `GET /api/v1/metrics`.
+Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`. Integration API живёт отдельно: `https://domain/api/integrations/v1/` → `api:3000/api/integrations/v1/`.
+Operational endpoints: `GET /api/v1/health`, `GET /api/v1/ready`, `GET /api/v1/metrics`.
 
 ---
 
-## REST API (префикс `/api/v1`)
+## HTTP API
 
 | Метод | Путь | Назначение |
 | --- | --- | --- |
-| `GET` | `/health` | Health-проверка (`{status, service: "api"}`). |
-| `GET` | `/ready` | Readiness-проверка Redis с bounded timeout (`200`/`503`). |
-| `GET` | `/metrics` | Prometheus text exposition для operations scraping; не browser product API. |
-| `POST` | `/rooms` | Создать комнату → возвращает `slug`, `roomId`, `participantId`, `roomSessionToken`, `signalingUrl`, `mediaNodeId`. |
-| `GET` | `/rooms/:slug` | Метаданные комнаты: `status`, `expiresAt`, `closedReason`, `participantCount`, `signalingUrl`. |
-| `POST` | `/rooms/:slug/join` | Присоединиться: выдаёт `participantId`, `isCreator`, `token` (join), `roomSessionToken`, `signalingUrl`. |
-| `POST` | `/rooms/:slug/session/refresh` | Обновить join-токен по `participantId` + `roomSessionToken`. |
+| `GET` | `/api/v1/health` | Liveness-проверка (`{status, service: "api"}`). |
+| `GET` | `/api/v1/ready` | Readiness-проверка Redis с bounded timeout (`200`/`503`). |
+| `GET` | `/api/v1/metrics` | Prometheus text exposition для operations scraping; не browser product API. |
+| `GET` | `/api/v1/app-config` | Публичная read-only конфигурация доступных browser capabilities. |
+| `POST` | `/api/v1/rooms` | Создать комнату и pending-сессию создателя. |
+| `GET` | `/api/v1/rooms/:slug` | Метаданные комнаты. |
+| `POST` | `/api/v1/rooms/:slug/join` | Войти в room session и получить короткоживущий signaling token. |
+| `POST` | `/api/v1/rooms/:slug/join-requests` | Создать заявку гостя для комнаты с access policy `approval`. |
+| `POST` | `/api/v1/rooms/:slug/join-requests/list` | Получить ожидающие заявки создателю комнаты. |
+| `POST` | `/api/v1/rooms/:slug/join-requests/:requestId/status` | Проверить статус заявки гостя. |
+| `POST` | `/api/v1/rooms/:slug/join-requests/:requestId/approve` | Одобрить заявку создателю комнаты. |
+| `POST` | `/api/v1/rooms/:slug/join-requests/:requestId/deny` | Отклонить заявку создателю комнаты. |
+| `POST` | `/api/v1/rooms/:slug/admissions` | Выдать одноразовую ссылку входа создателю приватной комнаты. |
+| `POST` | `/api/v1/rooms/:slug/session/refresh` | Обновить signaling token для той же room session. |
+| `POST` | `/api/v1/admissions/exchange` | Обменять одноразовый browser admission code на pending room session. |
+| `POST` | `/api/integrations/v1/rooms` | Создать или идемпотентно получить integration room по `externalRoomId`. Требуется service JWT. |
+| `POST` | `/api/integrations/v1/rooms/:roomId/admissions` | Выдать персональную одноразовую ссылку входа для integration room. Требуется service JWT. |
 
-Создание комнаты **не создаёт** живого участника — создатель заходит только после явного Join. `isCreator` — метаданные, а не права хоста.
+Создание комнаты и выдача admission **не создают** живого участника — создатель или гость входят только после явного Join. `isCreator` даёт только документированные room-local live controls: закрытие комнаты для всех, управление live-участниками и передачу creator status; durable host roles и глобальная модерация отсутствуют.
+
+Swagger UI доступен по `GET /api/docs`, OpenAPI JSON — по `GET /api/docs-json`. В Swagger есть только placeholder-примеры: service JWT и реальные секреты туда не вставляются.
 
 `/metrics` отдаёт агрегированные API HTTP, room-control, Redis operation и Node.js process метрики. Labels фиксированы и низкокардинальны; room IDs, participant IDs, request IDs, command IDs и токены не используются как labels.
 
@@ -57,8 +69,10 @@ Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`
 | `JOIN_TOKEN_SECRET` | Секрет подписи join-токена. **Должен совпадать** с `media`. |
 | `JOIN_TOKEN_TTL_SECONDS` | TTL join-токена (по умолчанию `300`). |
 | `ROOM_SESSION_TOKEN_SECRET` | Отдельный секрет для хэша `roomSessionToken` (если не задан — fallback на `JOIN_TOKEN_SECRET`). |
-| `API_IMAGE` | Docker-образ для `docker-compose.yml` (подставляется CI). |
+| `BE_IMAGE` | Docker-образ для `docker-compose.yml` (подставляется CI). |
 | `API_BIND_ADDR` / `API_PORT` | Внешний проброс порта (по умолчанию `127.0.0.1:3000`). |
+
+В `docker-compose.yml` пустые optional JWT-поля не передаются в контейнер. Не задавайте их пустой строкой: либо не задавайте вовсе, либо передавайте полный набор `AUTH_COOKIE_JWT_*`; для интеграции включайте `INTEGRATION_API_ENABLED=true` только вместе с непустым `INTEGRATION_JWT_CREDENTIALS_JSON`.
 
 ---
 
@@ -67,15 +81,17 @@ Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`
 ### Корень
 | Файл | Что делает |
 | --- | --- |
-| `main.ts` | Bootstrap NestJS: глобальный префикс `api/v1`, CORS (origin = `WEB_PUBLIC_URL`), `ValidationPipe` (whitelist + transform), listen на `0.0.0.0:PORT`. |
-| `app.module.ts` | Корневой модуль: импортирует `ConfigModule`, `RedisModule`, `HealthModule`, `RoomsModule`. |
-| `contracts/index.ts` | Zod-схемы и TS-типы REST/WS-контрактов (rooms, participants, chat, WS-события, коды ошибок). Единый источник истины для формата API. |
+| `main.ts` | Создаёт Nest application и слушает `0.0.0.0:PORT`. |
+| `bootstrap.ts` | Глобальный префикс `api/v1` с исключением integration routes, CORS, validation, logging и Swagger. |
+| `app.module.ts` | Корневой модуль: `ConfigModule`, `AppConfigModule`, `IntegrationsModule`, `RedisModule`, `HealthModule`, `RoomsModule`. |
+| `contracts/index.ts` | Zod-схемы и TypeScript-типы API boundary; канонический межсервисный контракт — `../docs/contracts.md`. |
 
 ### `health/` — health-check
 | Файл | Что делает |
 | --- | --- |
 | `health.controller.ts` | `GET /health` → `{status: "ok", service: "api"}`. |
-| `health.module.ts` | Регистрация контроллера. |
+| `ready.controller.ts` | `GET /ready` — Redis readiness (`200` или `503`). |
+| `health.module.ts` | Регистрирует health, readiness и metrics controllers. |
 
 ### `redis/` — инфраструктура Redis
 | Файл | Что делает |
@@ -89,7 +105,7 @@ Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`
 | --- | --- |
 | `rooms.controller.ts` | Тонкие REST-эндпоинты (`POST /rooms`, `GET /rooms/:slug`, `POST .../join`, `POST .../session/refresh`) с валидацией DTO. |
 | `rooms.service.ts` | Бизнес-логика: создание комнаты (slug, mediaNode, signalingUrl), lookup, join (восстановление сессии по токену, выдача join-токена), refresh сессии. |
-| `room.repository.ts` | `RedisRoomRepository` (`abstract RoomRepository`): запись/чтение room metadata и сессий участников, подсчёт участников, проверка live-участника. Хранение только сериализуемых данных. |
+| `room.repository.ts` | `RedisRoomRepository` (`abstract RoomRepository`): room metadata, session, admission, approval-request и integration ownership/idempotency state. Хранение только сериализуемых данных. |
 | `room-token.service.ts` | Генерация/верификация токенов: join-токен (JWT-подобный, HS256, с TTL) и `roomSessionToken` (HMAC-SHA256 хэш). |
 | `room-errors.ts` | HTTP-исключения с кодами: `ROOM_NOT_FOUND`, `ROOM_EXPIRED`, `ROOM_CLOSED`, `INVALID_TOKEN`. |
 | `dto/create-room.dto.ts` | Тело запроса создания комнаты. |
@@ -97,26 +113,30 @@ Edge-маршрутизация: `https://domain/api/v1/` → `api:3000/api/v1/`
 | `dto/room-params.dto.ts` | Валидация `:slug`. |
 | `dto/session-refresh.dto.ts` | Тело refresh (`participantId`, `roomSessionToken`). |
 
+### `app-config/`, `auth/`, `integrations/`, `observability/`
+| Каталог | Что делает |
+| --- | --- |
+| `app-config/` | Возвращает browser-safe config и опционально trusted cookie identity. |
+| `auth/` | Валидирует optional trusted parent-domain cookie JWT. |
+| `integrations/` | Проверяет service JWT registry, rate-limit и создаёт integration rooms/admissions. |
+| `observability/` | API logging interceptor и Prometheus metrics. |
+
 ---
 
-## Ключи в Redis
+## Redis
 
-| Ключ | Тип | Назначение |
-| --- | --- | --- |
-| `room:{roomId}` | string | Метаданные комнаты (статус, expiresAt, signalingUrl…). |
-| `room_slug:{slug}` | string | Маппинг slug → roomId. |
-| `room:{roomId}:sessions` | hash | Сессии участников (`participantId` → запись с `tokenHash`, `isCreator`…). TTL по `expiresAt`. |
-| `room_session_token:{hmac}` | string | Прямой индекс HMAC `roomSessionToken` → `{roomId, participantId}`. TTL совпадает с session. |
-| `room:{roomId}:participants` | hash | Живые участники (заполняется media-сервисом; API только читает `hLen`/`hGet`). |
+API хранит только сериализуемые metadata, room sessions, session-token indexes, approval requests, one-time admission state и integration ownership/idempotency mappings. Signaling/media отдельно хранит live participants, media lease и chat history; mediasoup runtime objects не попадают в Redis.
+
+Полный перечень ключей, их формат и TTL — в [`../docs/contracts.md`](../docs/contracts.md#redis-keys). В частности, integration room использует `integration_room:{integrationId}:{externalRoomHash}` и `integration_room_owner:{roomId}`; эти mappings живут без TTL, пока комната active, и получают 15-минутный TTL после опустения или закрытия комнаты.
 
 ---
 
 ## CI/CD
 
-`.gitlab-ci.yml` — pipeline на ветке `main`:
-1. **validate** — lint, typecheck, test, build.
-2. **build** — сборка Docker-образа (`--target production`), теги `<sha>` + `latest`.
-3. **deploy** — копирование `.env` (`DEPLOY_ENV_PROD` или `.env.example`), `docker compose up -d` (сеть `conference-net`).
-4. **cleanup** — prune контейнеров/образов старше 24ч.
+`.gitlab-ci.yml` запускает:
+1. **validate** — lint, typecheck, test, build для `main` и merge requests;
+2. **build** — на `main` собирает production image с тегами `<sha>` и `latest`;
+3. **deploy** — на `main` получает production `.env` из GitLab variable `DEPLOY_ENV_PROD` (либо использует `.env.example`) и запускает `docker compose up -d` в сети `conference-net`;
+4. **cleanup** — на `main` очищает старые контейнеры и образы.
 
-Runner: `158.160.25.200`. Продуктивная среда: `prod`.
+GitLab secrets должны содержать значения для включённых optional возможностей; README и `.env.example` не содержат production credential values.
