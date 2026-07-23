@@ -108,11 +108,7 @@ function testConfig(overrides: Partial<ApiConfig> = {}): ApiConfig {
     RECORDING_S3_FORCE_PATH_STYLE: false,
     RECORDING_S3_PRESIGN_TTL_SECONDS: 900,
     RECORDING_COMPOSITION_LEASE_SECONDS: 300,
-    RECORDING_CONTROL_JWT_ISSUER: "conference-signaling-tests",
-    RECORDING_CONTROL_JWT_AUDIENCE: "conference-recording-control",
     RECORDING_CONTROL_JWT_HS256_SECRET: "recording-control-test-secret-with-32-chars",
-    RECORDING_CONTROL_JWT_MAX_TTL_SECONDS: 300,
-    RECORDING_BOT_ADMISSION_TTL_SECONDS: 60,
     ...overrides,
   };
 }
