@@ -1,6 +1,5 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { CompositionJobState, RecordingState } from "@prisma/client";
-import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { RecordingStorageService } from "./recording-storage.service.js";
 import type { SegmentUploadItemDto } from "./recording-worker.dto.js";

@@ -16,10 +16,8 @@ export class RecordingControlAuthService {
     const [scheme, token, ...extra] = value?.trim().split(/\s+/) ?? [];
     if (scheme !== "Bearer" || !token || extra.length > 0) throw invalidToken("Invalid recording control credential");
 
-    const issuer = this.config.get("RECORDING_CONTROL_JWT_ISSUER", { infer: true });
-    const audience = this.config.get("RECORDING_CONTROL_JWT_AUDIENCE", { infer: true });
     const secret = this.config.get("RECORDING_CONTROL_JWT_HS256_SECRET", { infer: true });
-    if (!issuer || !audience || !secret) throw invalidToken("Invalid recording control credential");
+    if (!secret) throw invalidToken("Invalid recording control credential");
 
     const [encodedHeader, encodedPayload, encodedSignature, ...rest] = token.split(".");
     if (!encodedHeader || !encodedPayload || !encodedSignature || rest.length > 0) {
@@ -33,20 +31,19 @@ export class RecordingControlAuthService {
       const actual = Buffer.from(encodedSignature, "base64url");
       const now = Math.floor(Date.now() / 1_000);
       const audiences = Array.isArray(payload.aud) ? payload.aud : payload.aud ? [payload.aud] : [];
-      const maxTtl = this.config.get("RECORDING_CONTROL_JWT_MAX_TTL_SECONDS", { infer: true }) ?? 300;
       if (
         header.alg !== "HS256" ||
         actual.length !== expected.length ||
         !timingSafeEqual(actual, expected) ||
-        payload.iss !== issuer ||
-        !audiences.includes(audience) ||
+        payload.iss !== "conference-signaling" ||
+        !audiences.includes("conference-recording-control") ||
         payload.sub !== "signaling" ||
         typeof payload.iat !== "number" ||
         typeof payload.exp !== "number" ||
         payload.iat > now ||
         payload.exp <= now ||
         payload.exp <= payload.iat ||
-        payload.exp - payload.iat > maxTtl ||
+        payload.exp - payload.iat > 300 ||
         (payload.nbf !== undefined && payload.nbf > now)
       ) {
         throw invalidToken("Invalid recording control credential");

@@ -71,13 +71,8 @@ const apiConfigSchema = z
     RECORDING_COMPOSITION_LEASE_SECONDS: z.coerce.number().int().min(30).max(3_600).default(300),
     RECORDING_CAPTURE_SERVICE_SECRET: z.string().min(32).optional(),
     RECORDING_COMPOSITION_SERVICE_SECRET: z.string().min(32).optional(),
-    RECORDING_CONTROL_JWT_ISSUER: z.string().trim().min(1).optional(),
-    RECORDING_CONTROL_JWT_AUDIENCE: z.string().trim().min(1).optional(),
     RECORDING_CONTROL_JWT_HS256_SECRET: z.string().min(32).optional(),
-    RECORDING_CONTROL_JWT_MAX_TTL_SECONDS: z.coerce.number().int().min(60).max(3_600).optional(),
-    RECORDING_BOT_ADMISSION_JWT_ISSUER: z.string().trim().min(1).max(512).optional(),
     RECORDING_BOT_ADMISSION_JWT_HS256_SECRET: z.string().min(32).optional(),
-    RECORDING_BOT_ADMISSION_TTL_SECONDS: z.coerce.number().int().min(1).max(60).default(60),
   })
   .superRefine((config, context) => {
     if (config.NODE_ENV === "production" && config.JOIN_TOKEN_SECRET === defaultJoinTokenSecret) {
@@ -176,35 +171,6 @@ const apiConfigSchema = z
       }
     }
 
-    const recordingControlFields = [
-      ["RECORDING_CONTROL_JWT_ISSUER", config.RECORDING_CONTROL_JWT_ISSUER],
-      ["RECORDING_CONTROL_JWT_AUDIENCE", config.RECORDING_CONTROL_JWT_AUDIENCE],
-      ["RECORDING_CONTROL_JWT_HS256_SECRET", config.RECORDING_CONTROL_JWT_HS256_SECRET],
-    ] as const;
-    if (recordingControlFields.some(([, value]) => value !== undefined) && !recordingControlFields.every(([, value]) => value !== undefined)) {
-      for (const [field, value] of recordingControlFields) {
-        if (value === undefined) {
-          context.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: [field],
-            message: "is required when recording control JWT validation is configured",
-          });
-        }
-      }
-    }
-
-    const botAdmissionFields = [
-      ["RECORDING_BOT_ADMISSION_JWT_ISSUER", config.RECORDING_BOT_ADMISSION_JWT_ISSUER],
-      ["RECORDING_BOT_ADMISSION_JWT_HS256_SECRET", config.RECORDING_BOT_ADMISSION_JWT_HS256_SECRET],
-    ] as const;
-    const hasCompleteBotAdmissionConfig = botAdmissionFields.every(([, value]) => value !== undefined);
-    if (botAdmissionFields.some(([, value]) => value !== undefined) && !hasCompleteBotAdmissionConfig) {
-      for (const [field, value] of botAdmissionFields) {
-        if (value === undefined) {
-          context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: "is required when recording bot admission signing is configured" });
-        }
-      }
-    }
   });
 
 export type ApiConfig = z.infer<typeof apiConfigSchema>;

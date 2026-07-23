@@ -39,6 +39,10 @@ Operational endpoints: `GET /api/v1/health`, `GET /api/v1/ready`, `GET /api/v1/m
 | `POST` | `/api/v1/admissions/exchange` | Обменять одноразовый browser admission code на pending room session. |
 | `POST` | `/api/integrations/v1/rooms` | Создать или идемпотентно получить integration room по `externalRoomId`. Требуется service JWT. |
 | `POST` | `/api/integrations/v1/rooms/:roomId/admissions` | Выдать персональную одноразовую ссылку входа для integration room. Требуется service JWT. |
+| `GET` | `/api/integrations/v1/recordings/:recordingId` | Получить owner-scoped статус записи. Для готового MP4 возвращает короткоживущий presigned download URL. |
+| `GET` | `/api/integrations/v1/rooms/:roomId/recordings` | Получить записи комнаты только в границах своей integration. |
+| `GET` | `/api/integrations/v1/rooms/:roomId/history` | Получить durable историю комнаты: lifecycle, участники, чат и запись. |
+| `POST` | `/api/integrations/v1/recordings/:recordingId/callbacks/retry` | Повторно поставить в очередь неуспешный ready callback. |
 
 Создание комнаты и выдача admission **не создают** живого участника — создатель или гость входят только после явного Join. `isCreator` даёт только документированные room-local live controls: закрытие комнаты для всех, управление live-участниками и передачу creator status; durable host roles и глобальная модерация отсутствуют.
 
@@ -69,6 +73,14 @@ Swagger UI доступен по `GET /api/docs`, OpenAPI JSON — по `GET /ap
 | `JOIN_TOKEN_SECRET` | Секрет подписи join-токена. **Должен совпадать** с `media`. |
 | `JOIN_TOKEN_TTL_SECONDS` | TTL join-токена (по умолчанию `300`). |
 | `ROOM_SESSION_TOKEN_SECRET` | Отдельный секрет для хэша `roomSessionToken` (если не задан — fallback на `JOIN_TOKEN_SECRET`). |
+| `DATABASE_URL` | PostgreSQL durable control plane для E12 recording, artifact, composition job и callback delivery. |
+| `RECORDING_DELIVERY_ENABLED` | Включает E12 storage/delivery runtime; требует полный набор recording-переменных. |
+| `RECORDING_S3_ENDPOINT` / `RECORDING_S3_PUBLIC_ENDPOINT` | Internal и browser-reachable S3 endpoint. Для Yandex: `https://storage.yandexcloud.net`. |
+| `RECORDING_S3_REGION` / `RECORDING_S3_BUCKET` | Регион и private bucket. Для Yandex регион — `ru-central1`. |
+| `RECORDING_S3_ACCESS_KEY_ID` / `RECORDING_S3_SECRET_ACCESS_KEY` | Статический ключ service account. Эти значения доступны только API. |
+| `RECORDING_S3_FORCE_PATH_STYLE` | Для Yandex — `true`. |
+| `RECORDING_ARTIFACT_RETENTION_DAYS` | Срок хранения итогового MP4; production значение — `30`. |
+| `RECORDING_CAPTURE_SERVICE_SECRET` / `RECORDING_COMPOSITION_SERVICE_SECRET` | Разные secrets внутренних API capture и composition worker. |
 | `BE_IMAGE` | Docker-образ для `docker-compose.yml` (подставляется CI). |
 | `API_BIND_ADDR` / `API_PORT` | Внешний проброс порта (по умолчанию `127.0.0.1:3000`). |
 

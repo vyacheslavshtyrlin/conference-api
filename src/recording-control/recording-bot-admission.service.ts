@@ -31,16 +31,14 @@ export class RecordingBotAdmissionService {
       throw this.rejected();
     }
 
-    const issuer = this.config.get("RECORDING_BOT_ADMISSION_JWT_ISSUER", { infer: true });
     const secret = this.config.get("RECORDING_BOT_ADMISSION_JWT_HS256_SECRET", { infer: true });
-    if (!issuer || !secret) {
+    if (!secret) {
       throw new ServiceUnavailableException({ code: "BOT_ADMISSION_NOT_CONFIGURED", message: "Recording bot admission signing is not configured" });
     }
 
     const nowSeconds = Math.floor(Date.now() / 1_000);
-    const configuredTtl = this.config.get("RECORDING_BOT_ADMISSION_TTL_SECONDS", { infer: true });
     const roomDeadlineSeconds = room.expiresAt ? Math.floor(Date.parse(room.expiresAt) / 1_000) : Number.MAX_SAFE_INTEGER;
-    const expiresSeconds = Math.min(nowSeconds + configuredTtl, roomDeadlineSeconds);
+    const expiresSeconds = Math.min(nowSeconds + 60, roomDeadlineSeconds);
     if (expiresSeconds <= nowSeconds) throw this.rejected();
 
     const expiresAt = new Date(expiresSeconds * 1_000).toISOString();
@@ -57,7 +55,7 @@ export class RecordingBotAdmissionService {
 
       const header = this.encode({ alg: "HS256", typ: "recording-bot+jwt" });
       const payload = this.encode({
-        iss: issuer,
+        iss: "conference-api",
         aud: audience,
         sub: "recording-bot",
         roomId: room.roomId,

@@ -36,7 +36,6 @@ describe("configureApiApplication", () => {
       RECORDING_S3_FORCE_PATH_STYLE: false,
       RECORDING_S3_PRESIGN_TTL_SECONDS: 900,
       RECORDING_COMPOSITION_LEASE_SECONDS: 300,
-      RECORDING_BOT_ADMISSION_TTL_SECONDS: 60,
     });
 
     expect(app.enableShutdownHooks).toHaveBeenCalledOnce();
