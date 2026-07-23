@@ -8,6 +8,8 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RoomMetadata } from "#contracts";
 import type { ApiConfig } from "../config/api-config.js";
+import { PrismaService } from "../prisma/prisma.service.js";
+import { RedisConnection } from "../redis/redis.connection.js";
 import type {
   AdmissionRecord,
   ConsumeAdmissionCommand,
@@ -60,7 +62,7 @@ function signRecordingControlJwt(payload: Record<string, unknown> = {}): string 
   const issuedAt = Math.floor(Date.now() / 1000);
   const header = encodeJson({ alg: "HS256", typ: "JWT" });
   const body = encodeJson({
-    iss: "conference-signaling-tests",
+    iss: "conference-signaling",
     aud: "conference-recording-control",
     sub: "signaling",
     iat: issuedAt,
@@ -283,6 +285,10 @@ async function createTestApp(config: ApiConfig): Promise<INestApplication> {
     .useClass(InMemoryIntegrationRoomRepository)
     .overrideProvider(ConfigService)
     .useValue(new ConfigService(config))
+    .overrideProvider(PrismaService)
+    .useValue({})
+    .overrideProvider(RedisConnection)
+    .useValue({ getClient: () => ({}) })
     .compile();
 
   const app = moduleRef.createNestApplication();
