@@ -8,6 +8,7 @@ RUN npm ci
 
 FROM deps AS dev
 COPY . .
+RUN npx prisma generate --schema prisma/schema.prisma
 EXPOSE 3000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
   CMD wget -q --spider http://127.0.0.1:3000/api/v1/health || exit 1
@@ -15,6 +16,7 @@ CMD ["npm", "run", "dev"]
 
 FROM deps AS build
 COPY . .
+RUN npx prisma generate --schema prisma/schema.prisma
 RUN npm run build
 RUN npm prune --omit=dev
 
