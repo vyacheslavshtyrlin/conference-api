@@ -40,6 +40,14 @@ describe("configureSwaggerDocumentation", () => {
       "managerInOneCall"
     );
     expect(
+      response.body.paths["/api/integrations/v1/rooms"].post.requestBody.content["application/json"].examples
+        .managerInOneCall.value.recordingRequested
+    ).toBe(true);
+    expect(
+      response.body.paths["/api/integrations/v1/rooms"].post.responses["201"].content["application/json"].examples
+        .managerInOneCall.value.recordingId
+    ).toBe("rec_01H...");
+    expect(
       response.body.paths["/api/integrations/v1/rooms"].post.requestBody.content["application/json"].schema.properties
         .externalRoomId.pattern
     ).toBe("^[a-zA-Z0-9._:-]+$");

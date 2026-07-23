@@ -54,6 +54,18 @@ class InMemoryRoomRepository extends RoomRepository {
   async getIntegrationRoomOwner(): Promise<IntegrationRoomOwnerRecord | undefined> {
     return undefined;
   }
+  async getIntegrationRoomOwnerByRecordingId(): Promise<IntegrationRoomOwnerRecord | undefined> {
+    return undefined;
+  }
+  async getRecordingControlState() {
+    return "requested" as const;
+  }
+  async activateRecording() {
+    return "capturing" as const;
+  }
+  async closeRecordingInputs() {
+    return "inactive" as const;
+  }
 
   async createAdmission(record: AdmissionRecord): Promise<void> {
     this.admissions.set(record.codeHash, record);

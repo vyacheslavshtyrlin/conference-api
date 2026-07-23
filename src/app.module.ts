@@ -5,6 +5,9 @@ import { HealthModule } from "./health/health.module.js";
 import { IntegrationsModule } from "./integrations/integrations.module.js";
 import { RedisModule } from "./redis/redis.module.js";
 import { RoomsModule } from "./rooms/rooms.module.js";
+import { RecordingControlModule } from "./recording-control/recording-control.module.js";
+import { PrismaModule } from "./prisma/prisma.module.js";
+import { RecordingsModule } from "./recordings/recordings.module.js";
 import { validateApiConfig } from "./config/api-config.js";
 
 @Module({
@@ -14,10 +17,13 @@ import { validateApiConfig } from "./config/api-config.js";
       validate: validateApiConfig,
     }),
     AppConfigModule,
+    PrismaModule,
+    RecordingsModule,
     IntegrationsModule,
     RedisModule,
     HealthModule,
     RoomsModule,
+    RecordingControlModule,
   ],
 })
 export class AppModule {}

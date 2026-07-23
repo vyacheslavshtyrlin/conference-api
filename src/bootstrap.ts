@@ -9,6 +9,11 @@ export function configureApiApplication(app: INestApplication, config: ApiConfig
     exclude: [
       { path: "api/integrations/v1/rooms", method: RequestMethod.ALL },
       { path: "api/integrations/v1/rooms/(.*)", method: RequestMethod.ALL },
+      { path: "api/integrations/v1/recordings/(.*)", method: RequestMethod.ALL },
+      { path: "internal/v1/rooms/(.*)", method: RequestMethod.ALL },
+      { path: "internal/v1/recordings/(.*)", method: RequestMethod.ALL },
+      { path: "internal/v1/composition-jobs/(.*)", method: RequestMethod.ALL },
+      { path: "internal/v1/room-history/(.*)", method: RequestMethod.ALL },
     ],
   });
   app.enableCors({ credentials: true, origin: config.WEB_PUBLIC_URL });

@@ -1,9 +1,11 @@
 import { Global, Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { REDIS_CLIENT } from "./redis.constants.js";
 import { RedisConnection } from "./redis.connection.js";
 
 @Global()
 @Module({
+  imports: [ConfigModule],
   providers: [
     RedisConnection,
     {

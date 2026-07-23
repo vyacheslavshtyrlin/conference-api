@@ -56,6 +56,11 @@ export const createIntegrationRoomRequestOpenApiSchema = {
       example: "approval",
       description: "Необязательное поле. Можно передать только approval; если поле отсутствует, используется approval.",
     },
+    recordingRequested: {
+      type: "boolean",
+      default: false,
+      description: "Необязательное поле. Доступно только сервисной интеграции; при true API создаёт opaque recordingId без browser recording controls.",
+    },
     initialUser: {
       type: "object",
       required: ["id", "name"],
@@ -77,7 +82,7 @@ export const createIntegrationRoomRequestOpenApiSchema = {
 
 export const createIntegrationRoomResponseOpenApiSchema = {
   type: "object",
-  required: ["roomId", "slug", "mediaNodeId", "signalingUrl", "expiresAt", "status", "accessPolicy"],
+  required: ["roomId", "slug", "mediaNodeId", "signalingUrl", "expiresAt", "status", "accessPolicy", "recordingId"],
   additionalProperties: false,
   properties: {
     roomId: { type: "string", minLength: 1, example: "room_01H..." },
@@ -87,6 +92,12 @@ export const createIntegrationRoomResponseOpenApiSchema = {
     expiresAt: { type: "string", format: "date-time", nullable: true, example: "2026-06-02T12:15:00.000Z" },
     status: { type: "string", enum: ["active", "closed"], example: "active" },
     accessPolicy: { type: "string", enum: ["approval"], example: "approval" },
+    recordingId: {
+      type: "string",
+      nullable: true,
+      example: "rec_01H...",
+      description: "Opaque recording identifier for an integration-requested recording; null otherwise.",
+    },
     entryUrl: {
       type: "string",
       format: "uri",

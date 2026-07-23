@@ -11,6 +11,9 @@ import type { ApiConfig } from "../config/api-config.js";
 import { getApiMetrics } from "../observability/api-metrics.service.js";
 import { IntegrationRoomConflictError, RoomRepository } from "../rooms/room.repository.js";
 import { RoomTokenService } from "../rooms/room-token.service.js";
+import { RecordingRepository, RecordingRequestConflictError } from "../recordings/recording.repository.js";
+import { RecordingStorageService } from "../recordings/recording-storage.service.js";
+import { PrismaService } from "../prisma/prisma.service.js";
 import { invalidToken, roomClosed } from "../rooms/room-errors.js";
 import { integrationConflict, integrationForbidden, invalidPayload } from "./integration-auth.errors.js";
 import type { CreateIntegrationAdmissionDto } from "./dto/create-admission.dto.js";
@@ -33,6 +36,11 @@ export class IntegrationsService {
   constructor(
     @Inject(RoomRepository) private readonly rooms: RoomRepository,
     @Inject(RoomTokenService) private readonly tokens: RoomTokenService,
+    @Inject(RecordingRepository)
+    private readonly recordings: RecordingRepository,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(RecordingStorageService)
+    private readonly storage: RecordingStorageService,
     @Inject(ConfigService) private readonly config: ConfigService<ApiConfig, true>
   ) {}
 
@@ -45,6 +53,8 @@ export class IntegrationsService {
 
       const createdAt = new Date();
       const accessPolicy = command.body.accessPolicy ?? "approval";
+      const recordingRequested = command.body.recordingRequested ?? false;
+      const proposedRecordingId = recordingRequested ? `rec_${randomUUID()}` : undefined;
       const expiresAt = new Date(createdAt.getTime() + EMPTY_ROOM_TTL_SECONDS * 1_000).toISOString();
       const mediaNode = this.selectMediaNode();
       const requestHash = stableHash({
@@ -52,8 +62,23 @@ export class IntegrationsService {
         externalRoomId: command.body.externalRoomId,
         title: command.body.title ?? null,
         accessPolicy,
+        recordingRequested,
         initialUser: initialUser ?? null,
       });
+
+      const deliveryEnabled = this.config.get("RECORDING_DELIVERY_ENABLED", { infer: true });
+      const durableRecording = recordingRequested && deliveryEnabled
+        ? await this.recordings.ensureRequested({
+            recordingId: proposedRecordingId!,
+            integrationId: command.integrationId,
+            externalRoomId: command.body.externalRoomId,
+            requestFingerprint: requestHash,
+            expiresAt: new Date(
+              createdAt.getTime() +
+                this.config.get("RECORDING_ARTIFACT_RETENTION_DAYS", { infer: true })! * 86_400_000,
+            ),
+          })
+        : undefined;
 
       try {
         const room = await this.rooms.createRoom(
@@ -71,9 +96,29 @@ export class IntegrationsService {
               integrationId: command.integrationId,
               externalRoomId: stableHash(command.body.externalRoomId),
               requestHash,
+              recordingId: durableRecording?.recordingId ?? proposedRecordingId,
             },
           }
         );
+
+        if (deliveryEnabled) {
+          await this.prisma.integrationRoomHistory.upsert({
+            where: { roomId: room.roomId },
+            create: {
+              roomId: room.roomId,
+              integrationId: command.integrationId,
+              externalRoomHash: stableHash(command.body.externalRoomId),
+              createdAt,
+              expiresAt: new Date(createdAt.getTime() + 30 * 86_400_000),
+            },
+            update: {},
+          });
+        }
+        if (durableRecording) {
+          await this.recordings.attachRoom(durableRecording.recordingId, room.roomId);
+        }
+
+        const owner = await this.rooms.getIntegrationRoomOwner(room.roomId);
 
         const response: CreateIntegrationRoomResponse = {
           roomId: room.roomId,
@@ -83,6 +128,7 @@ export class IntegrationsService {
           expiresAt: room.expiresAt,
           status: room.status,
           accessPolicy: room.accessPolicy === "approval" ? room.accessPolicy : "approval",
+          recordingId: owner?.recordingId ?? null,
         };
 
         if (!initialUser) {
@@ -104,7 +150,7 @@ export class IntegrationsService {
           entryExpiresAt: admission.expiresAt,
         };
       } catch (error) {
-        if (error instanceof IntegrationRoomConflictError) {
+        if (error instanceof IntegrationRoomConflictError || error instanceof RecordingRequestConflictError) {
           throw integrationConflict("externalRoomId is already mapped to a different integration room request");
         }
         throw error;
@@ -126,6 +172,136 @@ export class IntegrationsService {
         expiresAt: command.body.expiresAt,
       });
     });
+  }
+
+  async getRecording(integrationId: string, recordingId: string) {
+    const recording = await this.prisma.recording.findFirst({
+      where: { id: recordingId, integrationId },
+      include: { artifacts: { orderBy: { createdAt: "desc" }, take: 1 } },
+    });
+    if (!recording) throw integrationForbidden();
+    const artifact = recording.artifacts[0];
+    if (!artifact || recording.state !== "READY") {
+      const response = { recordingId: recording.id, status: recording.state === "FAILED" ? "error" : recording.state.toLowerCase(), expiresAt: recording.expiresAt.toISOString(), artifact: null as null };
+      return recording.state === "FAILED" ? { ...response, error: { code: recording.failureCode ?? "RECORDING_FAILED", message: recording.failureMessage ?? "Recording failed" } } : response;
+    }
+    const download = await this.storage.allocatePublicGet(artifact.objectKey);
+    return { recordingId: recording.id, status: "ready", expiresAt: recording.expiresAt.toISOString(), artifact: { bytes: Number(artifact.bytes), contentType: artifact.contentType, durationSeconds: Number(artifact.durationSeconds), downloadUrl: download.url, downloadUrlExpiresAt: download.expiresAt } };
+  }
+
+  async getRoomRecordings(integrationId: string, roomId: string) {
+    const recordings = await this.prisma.recording.findMany({
+      where: { integrationId, roomId },
+      orderBy: { requestedAt: "asc" },
+      include: { artifacts: { orderBy: { createdAt: "desc" }, take: 1 } },
+    });
+    return {
+      roomId,
+      recordings: await Promise.all(
+        recordings.map(async (recording) => {
+          const artifact = recording.artifacts[0];
+          if (!artifact || recording.state !== "READY") {
+            const response = {
+              recordingId: recording.id,
+              status: recording.state === "FAILED" ? "error" : recording.state.toLowerCase(),
+              expiresAt: recording.expiresAt.toISOString(),
+              artifact: null as null,
+            };
+            return recording.state === "FAILED"
+              ? {
+                  ...response,
+                  error: {
+                    code: recording.failureCode ?? "RECORDING_FAILED",
+                    message: recording.failureMessage ?? "Recording failed",
+                  },
+                }
+              : response;
+          }
+          const download = await this.storage.allocatePublicGet(artifact.objectKey);
+          return {
+            recordingId: recording.id,
+            status: "ready",
+            expiresAt: recording.expiresAt.toISOString(),
+            artifact: {
+              bytes: Number(artifact.bytes),
+              contentType: artifact.contentType,
+              durationSeconds: Number(artifact.durationSeconds),
+              downloadUrl: download.url,
+              downloadUrlExpiresAt: download.expiresAt,
+            },
+          };
+        }),
+      ),
+    };
+  }
+  async getRoomHistory(integrationId: string, roomId: string) {
+    const room = await this.prisma.integrationRoomHistory.findFirst({
+      where: { roomId, integrationId },
+      include: {
+        participantSessions: { orderBy: { joinedAt: "asc" } },
+        chatMessages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: 500 },
+      },
+    });
+    if (!room) throw integrationForbidden();
+    const recording = await this.prisma.recording.findFirst({
+      where: { roomId, integrationId },
+      include: { artifacts: { orderBy: { createdAt: "desc" }, take: 1 } },
+    });
+    const artifact = recording?.artifacts[0];
+    const recordingResponse = !recording
+      ? null
+      : !artifact || recording.state !== "READY"
+        ? {
+            recordingId: recording.id,
+            status: recording.state === "FAILED" ? "error" : recording.state.toLowerCase(),
+            expiresAt: recording.expiresAt.toISOString(),
+            artifact: null as null,
+            ...(recording.state === "FAILED"
+              ? { error: { code: recording.failureCode ?? "RECORDING_FAILED", message: recording.failureMessage ?? "Recording failed" } }
+              : {}),
+          }
+        : await this.storage.allocatePublicGet(artifact.objectKey).then((download) => ({
+            recordingId: recording.id,
+            status: "ready",
+            expiresAt: recording.expiresAt.toISOString(),
+            artifact: {
+              bytes: Number(artifact.bytes),
+              contentType: artifact.contentType,
+              durationSeconds: Number(artifact.durationSeconds),
+              downloadUrl: download.url,
+              downloadUrlExpiresAt: download.expiresAt,
+            },
+          }));
+    return {
+      room: {
+        roomId: room.roomId,
+        createdAt: room.createdAt.toISOString(),
+        closedAt: room.closedAt?.toISOString() ?? null,
+        closedReason: room.closedReason,
+        expiresAt: room.expiresAt.toISOString(),
+      },
+      recording: recordingResponse,
+      participants: room.participantSessions.map((session) => ({
+        participantId: session.participantId,
+        displayName: session.displayName,
+        joinedAt: session.joinedAt.toISOString(),
+        leftAt: session.leftAt?.toISOString() ?? null,
+      })),
+      chat: room.chatMessages.map((message) => ({
+        messageId: message.id,
+        kind: message.kind,
+        participantId: message.participantId,
+        authorName: message.authorName,
+        text: message.text,
+        createdAt: message.createdAt.toISOString(),
+      })),
+    };
+  }
+  async retryRecordingCallback(integrationId: string, recordingId: string) {
+    const recording = await this.prisma.recording.findFirst({ where: { id: recordingId, integrationId }, select: { id: true } });
+    if (!recording) throw integrationForbidden();
+    const result = await this.prisma.callbackDelivery.updateMany({ where: { recordingId, state: "FAILED" }, data: { state: "PENDING", attempts: 0, lastError: null, nextAttemptAt: new Date() } });
+    return { retried: result.count };
   }
 
   async exchangeAdmission(body: ExchangeAdmissionDto): Promise<ExchangeAdmissionResponse> {

@@ -1,0 +1,174 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RecordingState {
+  REQUESTED
+  CAPTURING
+  CAPTURED
+  COMPOSING
+  READY
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum CompositionJobState {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum CallbackDeliveryState {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+model IntegrationRoomHistory {
+  roomId              String   @id @db.VarChar(128)
+  integrationId       String   @db.VarChar(128)
+  externalRoomHash    String   @db.VarChar(128)
+  createdAt           DateTime
+  closedAt            DateTime?
+  closedReason        String?  @db.VarChar(64)
+  expiresAt           DateTime
+  updatedAt           DateTime @updatedAt
+  participantSessions IntegrationRoomParticipantSession[]
+  chatMessages        IntegrationRoomChatMessage[]
+
+  @@index([integrationId, roomId])
+  @@index([expiresAt])
+}
+
+model IntegrationRoomParticipantSession {
+  id            String   @id @db.VarChar(128)
+  roomId        String   @db.VarChar(128)
+  participantId String   @db.VarChar(128)
+  displayName   String   @db.VarChar(160)
+  joinedAt      DateTime
+  leftAt        DateTime?
+  room          IntegrationRoomHistory @relation(fields: [roomId], references: [roomId], onDelete: Cascade)
+
+  @@index([roomId, joinedAt])
+  @@index([roomId, participantId, leftAt])
+}
+
+model IntegrationRoomChatMessage {
+  id            String   @id @db.VarChar(128)
+  roomId        String   @db.VarChar(128)
+  kind          String   @db.VarChar(32)
+  participantId String?  @db.VarChar(128)
+  authorName    String   @db.VarChar(160)
+  text          String   @db.VarChar(4000)
+  createdAt     DateTime
+  room          IntegrationRoomHistory @relation(fields: [roomId], references: [roomId], onDelete: Cascade)
+
+  @@index([roomId, createdAt, id])
+}
+model Recording {
+  id                  String         @id @db.VarChar(128)
+  integrationId       String         @db.VarChar(128)
+  externalRoomHash    String         @db.VarChar(128)
+  requestFingerprint  String         @db.VarChar(128)
+  roomId              String?        @unique @db.VarChar(128)
+  state               RecordingState @default(REQUESTED)
+  requestedAt         DateTime       @default(now())
+  capturedAt          DateTime?
+  readyAt             DateTime?
+  expiresAt           DateTime
+  failureCode         String?        @db.VarChar(64)
+  failureMessage      String?        @db.VarChar(512)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  segments            RecordingSegment[]
+  compositionJobs     CompositionJob[]
+  artifacts           RecordingArtifact[]
+  callbackDeliveries  CallbackDelivery[]
+
+  @@unique([integrationId, externalRoomHash])
+  @@index([integrationId, id])
+  @@index([expiresAt])
+}
+
+model RecordingSegment {
+  id              String    @id @default(cuid())
+  recordingId     String    @db.VarChar(128)
+  generation      Int
+  sequence        Int
+  timelineStartMs BigInt
+  timelineEndMs   BigInt
+  bytes           BigInt
+  sha256          String    @db.Char(64)
+  objectKey       String    @db.VarChar(1024)
+  contentType     String    @db.VarChar(128)
+  committedAt     DateTime  @default(now())
+  recording       Recording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+
+  @@unique([recordingId, generation, sequence])
+  @@index([recordingId, generation, sequence])
+}
+
+model CompositionJob {
+  id                String              @id @default(cuid())
+  recordingId       String              @db.VarChar(128)
+  version           Int
+  state             CompositionJobState @default(QUEUED)
+  attempts          Int                 @default(0)
+  leaseTokenHash    String?             @db.Char(64)
+  leaseExpiresAt    DateTime?
+  lastError         String?             @db.VarChar(2048)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  recording         Recording           @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  artifact          RecordingArtifact?
+
+  @@unique([recordingId, version])
+  @@index([state, leaseExpiresAt, createdAt])
+}
+
+model RecordingArtifact {
+  id              String         @id @default(cuid())
+  recordingId     String         @db.VarChar(128)
+  compositionJobId String        @unique
+  objectKey       String         @db.VarChar(1024)
+  bytes           BigInt
+  sha256          String         @db.Char(64)
+  contentType     String         @db.VarChar(128)
+  durationSeconds Decimal        @db.Decimal(12, 3)
+  width           Int
+  height          Int
+  frameRate       Decimal        @db.Decimal(8, 3)
+  createdAt       DateTime       @default(now())
+  recording       Recording      @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  compositionJob  CompositionJob @relation(fields: [compositionJobId], references: [id], onDelete: Restrict)
+  callbackDeliveries CallbackDelivery[]
+
+  @@unique([recordingId, compositionJobId])
+}
+
+model CallbackDelivery {
+  id              String                @id @default(cuid())
+  recordingId     String                @db.VarChar(128)
+  artifactId      String
+  eventType       String                @db.VarChar(64)
+  eventId         String                @unique @db.VarChar(128)
+  state           CallbackDeliveryState @default(PENDING)
+  attempts        Int                   @default(0)
+  nextAttemptAt   DateTime              @default(now())
+  lastError       String?               @db.VarChar(2048)
+  deliveredAt     DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  recording       Recording             @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  artifact        RecordingArtifact     @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+
+  @@unique([recordingId, artifactId, eventType])
+  @@index([state, nextAttemptAt])
+}

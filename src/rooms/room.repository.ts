@@ -1,5 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import type { RoomMetadata } from "#contracts";
+import { EMPTY_ROOM_TTL_SECONDS, type RoomMetadata } from "#contracts";
 import { REDIS_CLIENT } from "../redis/redis.constants.js";
 import type { RedisClient } from "../redis/redis.types.js";
 import { getApiMetrics } from "../observability/api-metrics.service.js";
@@ -19,6 +19,7 @@ export type CreateIntegrationRoomRecord = {
   integrationId: string;
   externalRoomId: string;
   requestHash: string;
+  recordingId?: string;
 };
 
 export type CreateRoomOptions = {
@@ -48,6 +49,7 @@ export type IntegrationRoomOwnerRecord = {
   externalRoomHash?: string;
   requestHash: string;
   createdAt: string;
+  recordingId?: string;
 };
 
 export type AdmissionRecord = {
@@ -90,11 +92,26 @@ export type JoinRequestRecord = {
   identity?: RoomSessionIdentityRecord;
 };
 
+export type RecordingControlState = "requested" | "capturing" | "finalizing";
+export type RecordingActivationRecord = {
+  activatedAt: string;
+};
+
 export abstract class RoomRepository {
   abstract createRoom(record: CreateRoomRecord, options?: CreateRoomOptions): Promise<RoomMetadata>;
   abstract getRoomById(roomId: string): Promise<RoomMetadata>;
   abstract getRoomBySlug(slug: string): Promise<RoomMetadata>;
   abstract getIntegrationRoomOwner(roomId: string): Promise<IntegrationRoomOwnerRecord | undefined>;
+  abstract getIntegrationRoomOwnerByRecordingId(recordingId: string): Promise<IntegrationRoomOwnerRecord | undefined>;
+  abstract getRecordingControlState(recordingId: string): Promise<RecordingControlState>;
+  abstract activateRecording(
+    recordingId: string,
+    roomExpiresAt?: string | null
+  ): Promise<"capturing" | "finalizing">;
+  async getRecordingActivation(_recordingId: string): Promise<RecordingActivationRecord | undefined> {
+    return undefined;
+  }
+  abstract closeRecordingInputs(recordingId: string): Promise<"finalizing" | "inactive">;
   abstract createAdmission(record: AdmissionRecord): Promise<void>;
   abstract consumeAdmission(command: ConsumeAdmissionCommand): Promise<{ room: RoomMetadata; session: RoomSessionRecord }>;
   abstract createJoinRequest(record: JoinRequestRecord, roomExpiresAt: string | null): Promise<void>;
@@ -143,9 +160,10 @@ export class RedisRoomRepository extends RoomRepository {
       ? {
           roomId: room.roomId,
           integrationId: integration.integrationId,
-          externalRoomHash: integration.externalRoomId,
-          requestHash: integration.requestHash,
-          createdAt: room.createdAt,
+           externalRoomHash: integration.externalRoomId,
+           requestHash: integration.requestHash,
+           createdAt: room.createdAt,
+           recordingId: integration.recordingId,
         }
       : null;
 
@@ -154,16 +172,18 @@ export class RedisRoomRepository extends RoomRepository {
         keys: [
           this.roomKey(room.roomId),
           this.slugKey(room.slug),
-          integration ? this.integrationExternalRoomKey(integration.integrationId, integration.externalRoomId) : "",
-          integration ? this.integrationRoomOwnerKey(room.roomId) : "",
+           integration ? this.integrationExternalRoomKey(integration.integrationId, integration.externalRoomId) : "",
+           integration ? this.integrationRoomOwnerKey(room.roomId) : "",
+           integration?.recordingId ? this.integrationRecordingKey(integration.recordingId) : "",
         ],
         arguments: [
           JSON.stringify(room),
           room.roomId,
           String(ttlMs ?? 0),
           integration ? "1" : "0",
-          integration?.requestHash ?? "",
-          mapping ? JSON.stringify(mapping) : "",
+           integration?.requestHash ?? "",
+           mapping ? JSON.stringify(mapping) : "",
+           integration?.recordingId ?? "",
         ],
       })
     );
@@ -248,6 +268,55 @@ export class RedisRoomRepository extends RoomRepository {
       this.redis.get(this.integrationRoomOwnerKey(roomId))
     );
     return parseIntegrationRoomOwner(raw);
+  }
+
+  async getIntegrationRoomOwnerByRecordingId(recordingId: string): Promise<IntegrationRoomOwnerRecord | undefined> {
+    const raw = await this.recordRedis("get_integration_recording_owner", () =>
+      this.redis.get(this.integrationRecordingKey(recordingId))
+    );
+    return parseIntegrationRoomOwner(raw);
+  }
+
+  async getRecordingControlState(recordingId: string): Promise<RecordingControlState> {
+    const result = await this.recordRedis("get_recording_control_state", () =>
+      this.redis.eval(GET_RECORDING_CONTROL_STATE_SCRIPT, {
+        keys: [this.recordingActivationKey(recordingId), this.recordingFinalizingKey(recordingId)],
+        arguments: [],
+      })
+    );
+    return parseRecordingControlState(result) ?? "requested";
+  }
+
+  override async getRecordingActivation(recordingId: string): Promise<RecordingActivationRecord | undefined> {
+    const raw = await this.recordRedis("get_recording_activation", () =>
+      this.redis.get(this.recordingActivationKey(recordingId))
+    );
+    return parseRecordingActivation(raw);
+  }
+
+  async activateRecording(
+    recordingId: string,
+    roomExpiresAt: string | null = null
+  ): Promise<"capturing" | "finalizing"> {
+    const ttlMs = getTtlMilliseconds(roomExpiresAt);
+    const result = await this.recordRedis("activate_recording", () =>
+      this.redis.eval(ACTIVATE_RECORDING_SCRIPT, {
+        keys: [this.recordingActivationKey(recordingId), this.recordingFinalizingKey(recordingId)],
+        arguments: [JSON.stringify({ activatedAt: new Date().toISOString() }), String(ttlMs ?? 0)],
+      })
+    );
+    const state = parseRecordingControlState(result);
+    return state === "finalizing" ? state : "capturing";
+  }
+
+  async closeRecordingInputs(recordingId: string): Promise<"finalizing" | "inactive"> {
+    const result = await this.recordRedis("close_recording_inputs", () =>
+      this.redis.eval(CLOSE_RECORDING_INPUTS_SCRIPT, {
+        keys: [this.recordingActivationKey(recordingId), this.recordingFinalizingKey(recordingId)],
+        arguments: [String(EMPTY_ROOM_TTL_SECONDS * 1_000)],
+      })
+    );
+    return result === "finalizing" ? result : "inactive";
   }
 
   async createAdmission(record: AdmissionRecord): Promise<void> {
@@ -521,6 +590,18 @@ export class RedisRoomRepository extends RoomRepository {
     return `integration_room_owner:${roomId}`;
   }
 
+  private integrationRecordingKey(recordingId: string): string {
+    return `integration_recording:${recordingId}`;
+  }
+
+  private recordingActivationKey(recordingId: string): string {
+    return `recording_activation:${recordingId}`;
+  }
+
+  private recordingFinalizingKey(recordingId: string): string {
+    return `recording_finalizing:${recordingId}`;
+  }
+
   private admissionKey(codeHash: string): string {
     return `admission:${codeHash}`;
   }
@@ -570,6 +651,11 @@ export class RedisRoomRepository extends RoomRepository {
       | "get_room_session_by_token_index"
       | "get_room_session_token_index_ttl"
       | "get_integration_room_owner"
+      | "get_integration_recording_owner"
+      | "get_recording_control_state"
+      | "get_recording_activation"
+      | "activate_recording"
+      | "close_recording_inputs"
       | "create_admission_atomic"
       | "consume_admission_atomic"
       | "save_join_request"
@@ -611,6 +697,7 @@ local room_key = KEYS[1]
 local slug_key = KEYS[2]
 local external_key = KEYS[3]
 local owner_key = KEYS[4]
+local recording_key = KEYS[5]
 
 local room_json = ARGV[1]
 local room_id = ARGV[2]
@@ -618,6 +705,7 @@ local ttl_ms = tonumber(ARGV[3])
 local has_integration = ARGV[4] == "1"
 local request_hash = ARGV[5]
 local mapping_json = ARGV[6]
+local recording_id = ARGV[7]
 
 local function encode_result(status, room)
   if room then
@@ -663,11 +751,17 @@ if ttl_ms > 0 then
 end
 
 if has_integration then
-  redis.call("SET", external_key, mapping_json)
-  redis.call("SET", owner_key, mapping_json)
-  if ttl_ms > 0 then
-    redis.call("PEXPIRE", external_key, ttl_ms)
-    redis.call("PEXPIRE", owner_key, ttl_ms)
+   redis.call("SET", external_key, mapping_json)
+   redis.call("SET", owner_key, mapping_json)
+   if recording_id ~= "" then
+     redis.call("SET", recording_key, mapping_json)
+   end
+   if ttl_ms > 0 then
+     redis.call("PEXPIRE", external_key, ttl_ms)
+     redis.call("PEXPIRE", owner_key, ttl_ms)
+     if recording_id ~= "" then
+       redis.call("PEXPIRE", recording_key, ttl_ms)
+     end
   end
 end
 
@@ -711,6 +805,37 @@ if ttl_ms > 0 then
 end
 
 return "created"
+`;
+
+const GET_RECORDING_CONTROL_STATE_SCRIPT = `
+if redis.call("EXISTS", KEYS[2]) == 1 then return "finalizing" end
+if redis.call("EXISTS", KEYS[1]) == 1 then return "capturing" end
+return "requested"
+`;
+
+const ACTIVATE_RECORDING_SCRIPT = `
+if redis.call("EXISTS", KEYS[2]) == 1 then return "finalizing" end
+if redis.call("EXISTS", KEYS[1]) == 0 then
+  redis.call("SET", KEYS[1], ARGV[1])
+  local ttl_ms = tonumber(ARGV[2])
+  if ttl_ms > 0 then redis.call("PEXPIRE", KEYS[1], ttl_ms) end
+end
+return "capturing"
+`;
+
+const CLOSE_RECORDING_INPUTS_SCRIPT = `
+if redis.call("EXISTS", KEYS[2]) == 1 then return "finalizing" end
+if redis.call("EXISTS", KEYS[1]) == 0 then return "inactive" end
+local max_ttl_ms = tonumber(ARGV[1])
+local activation_ttl_ms = redis.call("PTTL", KEYS[1])
+local ttl_ms = max_ttl_ms
+if activation_ttl_ms > 0 and activation_ttl_ms < ttl_ms then
+  ttl_ms = activation_ttl_ms
+end
+redis.call("SET", KEYS[2], "1")
+redis.call("PEXPIRE", KEYS[1], ttl_ms)
+redis.call("PEXPIRE", KEYS[2], ttl_ms)
+return "finalizing"
 `;
 
 const CONSUME_ADMISSION_SCRIPT = `
@@ -836,6 +961,27 @@ function parseAdmissionScriptStatus(value: unknown): "created" | "room_not_found
     : undefined;
 }
 
+function parseRecordingControlState(value: unknown): RecordingControlState | undefined {
+  return value === "requested" || value === "capturing" || value === "finalizing" ? value : undefined;
+}
+
+function parseRecordingActivation(value: string | null | undefined): RecordingActivationRecord | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      !isRecord(parsed) ||
+      typeof parsed.activatedAt !== "string" ||
+      Number.isNaN(Date.parse(parsed.activatedAt))
+    ) {
+      return undefined;
+    }
+    return { activatedAt: parsed.activatedAt };
+  } catch {
+    return undefined;
+  }
+}
+
 function parseConsumeAdmissionResult(
   value: unknown
 ):
@@ -874,6 +1020,9 @@ function parseIntegrationRoomRecord(value: CreateIntegrationRoomRecord | undefin
   ) {
     return undefined;
   }
+  if (value.recordingId !== undefined && (value.recordingId.length === 0 || !value.recordingId.startsWith("rec_"))) {
+    return undefined;
+  }
   return value;
 }
 
@@ -892,8 +1041,10 @@ function parseIntegrationRoomOwner(value: string | null | undefined): Integratio
         parsed.integrationId.length === 0 ||
         (parsed.externalRoomHash !== undefined &&
           (typeof parsed.externalRoomHash !== "string" || parsed.externalRoomHash.length === 0)) ||
-      typeof parsed.requestHash !== "string" ||
-      parsed.requestHash.length === 0 ||
+        typeof parsed.requestHash !== "string" ||
+        parsed.requestHash.length === 0 ||
+        (parsed.recordingId !== undefined &&
+          (typeof parsed.recordingId !== "string" || parsed.recordingId.length === 0 || !parsed.recordingId.startsWith("rec_"))) ||
       typeof parsed.createdAt !== "string" ||
       Number.isNaN(Date.parse(parsed.createdAt))
     ) {

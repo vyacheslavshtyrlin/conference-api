@@ -21,6 +21,7 @@ import { IntegrationRoomConflictError, RoomRepository } from "../rooms/room.repo
 import { RoomTokenService } from "../rooms/room-token.service.js";
 import { invalidToken } from "../rooms/room-errors.js";
 import { IntegrationsModule } from "./integrations.module.js";
+import { RecordingControlModule } from "../recording-control/recording-control.module.js";
 
 const integrationCredentials = {
   "crm-alpha": {
@@ -55,6 +56,23 @@ function signIntegrationJwt(payload: Record<string, unknown>, integrationId: key
   return `${header}.${body}.${signature}`;
 }
 
+function signRecordingControlJwt(payload: Record<string, unknown> = {}): string {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const header = encodeJson({ alg: "HS256", typ: "JWT" });
+  const body = encodeJson({
+    iss: "conference-signaling-tests",
+    aud: "conference-recording-control",
+    sub: "signaling",
+    iat: issuedAt,
+    exp: issuedAt + 60,
+    ...payload,
+  });
+  const signature = createHmac("sha256", "recording-control-test-secret-with-32-chars")
+    .update(`${header}.${body}`)
+    .digest("base64url");
+  return `${header}.${body}.${signature}`;
+}
+
 function testConfig(overrides: Partial<ApiConfig> = {}): ApiConfig {
   return {
     NODE_ENV: "test",
@@ -86,6 +104,15 @@ function testConfig(overrides: Partial<ApiConfig> = {}): ApiConfig {
     INTEGRATION_JWT_MAX_TTL_SECONDS: 900,
     INTEGRATION_RATE_LIMIT_WINDOW_SECONDS: 60,
     INTEGRATION_RATE_LIMIT_MAX_REQUESTS: 60,
+    RECORDING_DELIVERY_ENABLED: false,
+    RECORDING_S3_FORCE_PATH_STYLE: false,
+    RECORDING_S3_PRESIGN_TTL_SECONDS: 900,
+    RECORDING_COMPOSITION_LEASE_SECONDS: 300,
+    RECORDING_CONTROL_JWT_ISSUER: "conference-signaling-tests",
+    RECORDING_CONTROL_JWT_AUDIENCE: "conference-recording-control",
+    RECORDING_CONTROL_JWT_HS256_SECRET: "recording-control-test-secret-with-32-chars",
+    RECORDING_CONTROL_JWT_MAX_TTL_SECONDS: 300,
+    RECORDING_BOT_ADMISSION_TTL_SECONDS: 60,
     ...overrides,
   };
 }
@@ -97,6 +124,7 @@ class InMemoryIntegrationRoomRepository extends RoomRepository {
   readonly sessions = new Map<string, RoomSessionRecord>();
   readonly joinRequests = new Map<string, JoinRequestRecord>();
   readonly externalRooms = new Map<string, { requestHash: string; roomId: string }>();
+  readonly recordingStates = new Map<string, "capturing" | "finalizing">();
 
   async createRoom(record: CreateRoomRecord, options: CreateRoomOptions = {}): Promise<RoomMetadata> {
     const integration = options.integration;
@@ -124,6 +152,7 @@ class InMemoryIntegrationRoomRepository extends RoomRepository {
         externalRoomHash: integration.externalRoomId,
         requestHash: integration.requestHash,
         createdAt: room.createdAt,
+        recordingId: integration.recordingId,
       });
     }
 
@@ -140,6 +169,25 @@ class InMemoryIntegrationRoomRepository extends RoomRepository {
   }
   async getIntegrationRoomOwner(roomId: string): Promise<IntegrationRoomOwnerRecord | undefined> {
     return this.owners.get(roomId);
+  }
+  async getIntegrationRoomOwnerByRecordingId(recordingId: string): Promise<IntegrationRoomOwnerRecord | undefined> {
+    return Array.from(this.owners.values()).find((owner) => owner.recordingId === recordingId);
+  }
+  async getRecordingControlState(recordingId: string) {
+    return this.recordingStates.get(recordingId) ?? "requested";
+  }
+  async activateRecording(recordingId: string) {
+    const state = this.recordingStates.get(recordingId);
+    if (state === "finalizing") return state;
+    this.recordingStates.set(recordingId, "capturing");
+    return "capturing" as const;
+  }
+  async closeRecordingInputs(recordingId: string) {
+    if (this.recordingStates.get(recordingId) !== "capturing" && this.recordingStates.get(recordingId) !== "finalizing") {
+      return "inactive" as const;
+    }
+    this.recordingStates.set(recordingId, "finalizing");
+    return "finalizing" as const;
   }
   async createAdmission(record: AdmissionRecord): Promise<void> {
     this.admissions.set(record.codeHash, record);
@@ -233,7 +281,7 @@ class InMemoryIntegrationRoomRepository extends RoomRepository {
 
 async function createTestApp(config: ApiConfig): Promise<INestApplication> {
   const moduleRef = await Test.createTestingModule({
-    imports: [IntegrationsModule],
+    imports: [IntegrationsModule, RecordingControlModule],
   })
     .overrideProvider(RoomRepository)
     .useClass(InMemoryIntegrationRoomRepository)
@@ -246,6 +294,8 @@ async function createTestApp(config: ApiConfig): Promise<INestApplication> {
     exclude: [
       { path: "api/integrations/v1/rooms", method: RequestMethod.ALL },
       { path: "api/integrations/v1/rooms/(.*)", method: RequestMethod.ALL },
+      { path: "internal/v1/rooms/(.*)", method: RequestMethod.ALL },
+      { path: "internal/v1/recordings/(.*)", method: RequestMethod.ALL },
     ],
   });
   await app.init();
@@ -708,6 +758,60 @@ describe("IntegrationsController", () => {
       expect(response.status).toBe(401);
       expect(response.body).toMatchObject({ code: "INVALID_TOKEN" });
     });
+  });
+
+  it("keeps a requested recording id stable and exposes its private signaling lifecycle only to signaling", async () => {
+    app = await createTestApp(testConfig());
+    const integrationToken = signIntegrationJwt({});
+    const body = { externalRoomId: "crm-recording-1", recordingRequested: true };
+
+    const first = await request(app.getHttpServer())
+      .post("/api/integrations/v1/rooms")
+      .set("Authorization", `Bearer ${integrationToken}`)
+      .send(body)
+      .expect(201);
+    const retry = await request(app.getHttpServer())
+      .post("/api/integrations/v1/rooms")
+      .set("Authorization", `Bearer ${integrationToken}`)
+      .send(body)
+      .expect(201);
+
+    expect(first.body.recordingId).toMatch(/^rec_/);
+    expect(retry.body.recordingId).toBe(first.body.recordingId);
+    expect(first.body).not.toHaveProperty("integrationId");
+
+    await request(app.getHttpServer())
+      .get(`/internal/v1/rooms/${first.body.roomId}/recording`)
+      .expect(401);
+
+    const recordingToken = signRecordingControlJwt();
+    const lookup = await request(app.getHttpServer())
+      .get(`/internal/v1/rooms/${first.body.roomId}/recording`)
+      .set("Authorization", `Bearer ${recordingToken}`)
+      .expect(200);
+    expect(lookup.body).toEqual({
+      integrationId: "crm-alpha",
+      recordingId: first.body.recordingId,
+      requestedAt: expect.any(String),
+      status: "requested",
+    });
+    expect(new Date(lookup.body.requestedAt).toISOString()).toBe(lookup.body.requestedAt);
+
+    const activation = await request(app.getHttpServer())
+      .post(`/internal/v1/rooms/${first.body.roomId}/recording/activate`)
+      .set("Authorization", `Bearer ${recordingToken}`)
+      .expect(201);
+    expect(activation.body).toEqual({
+      integrationId: "crm-alpha",
+      recordingId: first.body.recordingId,
+      requestedAt: lookup.body.requestedAt,
+      status: "capturing",
+    });
+    await request(app.getHttpServer())
+      .post(`/internal/v1/recordings/${first.body.recordingId}/close-inputs`)
+      .set("Authorization", `Bearer ${recordingToken}`)
+      .expect(201)
+      .expect({ recordingId: first.body.recordingId, status: "finalizing" });
   });
 
   it("rate-limits repeated integration requests by integration id", async () => {

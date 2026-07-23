@@ -319,6 +319,7 @@ function createOpenApiDocument(): OpenAPIObject {
                     value: {
                       externalRoomId: "crm-call-123",
                       title: "Консультация клиента",
+                      recordingRequested: true,
                       initialUser: { id: "manager-42", name: "Анна Иванова" },
                     },
                   },
@@ -348,6 +349,7 @@ function createOpenApiDocument(): OpenAPIObject {
                         expiresAt: "2026-07-13T12:35:00.000Z",
                         status: "active",
                         accessPolicy: "approval",
+                        recordingId: "rec_01H...",
                         entryUrl: "http://localhost:5173/r/x7k2q9#code=opaque-admission-code",
                         entryExpiresAt: "2026-07-13T12:30:00.000Z",
                       },

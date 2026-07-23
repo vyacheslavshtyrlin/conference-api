@@ -127,7 +127,7 @@ Swagger UI доступен по `GET /api/docs`, OpenAPI JSON — по `GET /ap
 
 API хранит только сериализуемые metadata, room sessions, session-token indexes, approval requests, one-time admission state и integration ownership/idempotency mappings. Signaling/media отдельно хранит live participants, media lease и chat history; mediasoup runtime objects не попадают в Redis.
 
-Полный перечень ключей, их формат и TTL — в [`../docs/contracts.md`](../docs/contracts.md#redis-keys). В частности, integration room использует `integration_room:{integrationId}:{externalRoomHash}` и `integration_room_owner:{roomId}`; эти mappings живут без TTL, пока комната active, и получают 15-минутный TTL после опустения или закрытия комнаты.
+Полный перечень ключей, их формат и TTL — в [`../docs/contracts.md`](../docs/contracts.md#redis-keys). В частности, integration room использует `integration_room:{integrationId}:{externalRoomHash}` и `integration_room_owner:{roomId}`; эти mappings живут без TTL, пока в комнате есть live-участники, и получают общий 15-минутный TTL для новой пустой комнаты, после выхода последнего участника или после закрытия комнаты.
 
 ---
 

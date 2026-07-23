@@ -55,6 +55,22 @@ export class AppConfigService {
       INTEGRATION_JWT_MAX_TTL_SECONDS: this.config.get("INTEGRATION_JWT_MAX_TTL_SECONDS", { infer: true }),
       INTEGRATION_RATE_LIMIT_WINDOW_SECONDS: this.config.get("INTEGRATION_RATE_LIMIT_WINDOW_SECONDS", { infer: true }),
       INTEGRATION_RATE_LIMIT_MAX_REQUESTS: this.config.get("INTEGRATION_RATE_LIMIT_MAX_REQUESTS", { infer: true }),
+      RECORDING_DELIVERY_ENABLED: this.config.get("RECORDING_DELIVERY_ENABLED", { infer: true }),
+      DATABASE_URL: this.config.get("DATABASE_URL", { infer: true }),
+      RECORDING_S3_ENDPOINT: this.config.get("RECORDING_S3_ENDPOINT", { infer: true }),
+      RECORDING_S3_REGION: this.config.get("RECORDING_S3_REGION", { infer: true }),
+      RECORDING_S3_BUCKET: this.config.get("RECORDING_S3_BUCKET", { infer: true }),
+      RECORDING_S3_ACCESS_KEY_ID: this.config.get("RECORDING_S3_ACCESS_KEY_ID", { infer: true }),
+      RECORDING_S3_SECRET_ACCESS_KEY: this.config.get("RECORDING_S3_SECRET_ACCESS_KEY", { infer: true }),
+      RECORDING_S3_FORCE_PATH_STYLE: this.config.get("RECORDING_S3_FORCE_PATH_STYLE", { infer: true }),
+      RECORDING_S3_PRESIGN_TTL_SECONDS: this.config.get("RECORDING_S3_PRESIGN_TTL_SECONDS", { infer: true }),
+      RECORDING_ARTIFACT_RETENTION_DAYS: this.config.get("RECORDING_ARTIFACT_RETENTION_DAYS", { infer: true }),
+      RECORDING_COMPOSITION_LEASE_SECONDS: this.config.get("RECORDING_COMPOSITION_LEASE_SECONDS", { infer: true }),
+      RECORDING_CAPTURE_SERVICE_SECRET: this.config.get("RECORDING_CAPTURE_SERVICE_SECRET", { infer: true }),
+      RECORDING_COMPOSITION_SERVICE_SECRET: this.config.get("RECORDING_COMPOSITION_SERVICE_SECRET", { infer: true }),
+      RECORDING_BOT_ADMISSION_JWT_ISSUER: this.config.get("RECORDING_BOT_ADMISSION_JWT_ISSUER", { infer: true }),
+      RECORDING_BOT_ADMISSION_JWT_HS256_SECRET: this.config.get("RECORDING_BOT_ADMISSION_JWT_HS256_SECRET", { infer: true }),
+      RECORDING_BOT_ADMISSION_TTL_SECONDS: this.config.get("RECORDING_BOT_ADMISSION_TTL_SECONDS", { infer: true }),
     };
   }
 }

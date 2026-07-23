@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsIn, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateNested } from "class-validator";
+import { IsBoolean, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateNested } from "class-validator";
 
 export class InitialIntegrationUserDto {
   @IsString()
@@ -28,6 +28,10 @@ export class CreateIntegrationRoomDto {
   @IsOptional()
   @IsIn(["approval"])
   accessPolicy?: "approval";
+
+  @IsOptional()
+  @IsBoolean()
+  recordingRequested?: boolean;
 
   @IsOptional()
   @ValidateNested()

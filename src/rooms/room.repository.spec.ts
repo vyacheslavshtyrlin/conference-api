@@ -32,9 +32,37 @@ class FakeRedis {
     return this.expirations.get(key) ?? -1;
   }
   async eval(_script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown> {
+    if (options.keys[0]?.startsWith("recording_activation:")) return this.evalRecordingControl(options);
     if (options.arguments.length === 3) return this.evalCreateAdmission(options);
     if (options.arguments.length === 4) return this.evalConsumeAdmission(options);
     return this.evalCreateRoom(options);
+  }
+
+  private evalRecordingControl(options: { keys: string[]; arguments: string[] }): string {
+    const [activationKey, finalizingKey] = options.keys;
+    if (!activationKey || !finalizingKey) return "requested";
+    if (options.arguments.length === 0) {
+      if (this.values.has(finalizingKey)) return "finalizing";
+      return this.values.has(activationKey) ? "capturing" : "requested";
+    }
+    if (options.arguments.length === 2) {
+      if (this.values.has(finalizingKey)) return "finalizing";
+      if (!this.values.has(activationKey)) {
+        this.values.set(activationKey, options.arguments[0]!);
+        const ttlMs = Number(options.arguments[1]);
+        if (ttlMs > 0) this.expirations.set(activationKey, ttlMs);
+      }
+      return "capturing";
+    }
+    if (this.values.has(finalizingKey)) return "finalizing";
+    if (!this.values.has(activationKey)) return "inactive";
+    this.values.set(finalizingKey, "1");
+    const maximumTtlMs = Number(options.arguments[0]);
+    const activationTtlMs = this.expirations.get(activationKey) ?? -1;
+    const ttlMs = activationTtlMs > 0 ? Math.min(activationTtlMs, maximumTtlMs) : maximumTtlMs;
+    this.expirations.set(activationKey, ttlMs);
+    this.expirations.set(finalizingKey, ttlMs);
+    return "finalizing";
   }
 
   private evalCreateRoom(options: { keys: string[]; arguments: string[] }): string {
@@ -171,6 +199,48 @@ class FakeRedis {
     return JSON.stringify({ status: "consumed", room: roomRaw, session: nextSessionJson });
   }
 }
+
+describe("RedisRoomRepository recording marker lifecycle", () => {
+  it("atomically bounds activation and finalizing markers to the terminal 15-minute TTL without extending it on replay", async () => {
+    const redis = new FakeRedis();
+    const repository = new RedisRoomRepository(redis);
+
+    await repository.activateRecording("rec_terminal", "bot_webrtc");
+    await expect(repository.closeRecordingInputs("rec_terminal")).resolves.toBe("finalizing");
+
+    expect(redis.expirations.get("recording_activation:rec_terminal")).toBe(15 * 60 * 1_000);
+    expect(redis.expirations.get("recording_finalizing:rec_terminal")).toBe(15 * 60 * 1_000);
+
+    redis.expirations.set("recording_activation:rec_terminal", 123_000);
+    redis.expirations.set("recording_finalizing:rec_terminal", 123_000);
+    await expect(repository.closeRecordingInputs("rec_terminal")).resolves.toBe("finalizing");
+    expect(redis.expirations.get("recording_activation:rec_terminal")).toBe(123_000);
+    expect(redis.expirations.get("recording_finalizing:rec_terminal")).toBe(123_000);
+  });
+
+  it("does not create a finalizing marker for an inactive recording", async () => {
+    const redis = new FakeRedis();
+    const repository = new RedisRoomRepository(redis);
+    await expect(repository.closeRecordingInputs("rec_inactive")).resolves.toBe("inactive");
+    expect(redis.values.has("recording_finalizing:rec_inactive")).toBe(false);
+  });
+
+  it("caps both terminal markers at a shorter remaining activation deadline", async () => {
+    const redis = new FakeRedis();
+    const repository = new RedisRoomRepository(redis);
+    const roomDeadline = new Date(Date.now() + 120_000).toISOString();
+
+    await repository.activateRecording("rec_short_deadline", roomDeadline);
+    const remainingBeforeClose = redis.expirations.get("recording_activation:rec_short_deadline")!;
+    await expect(repository.closeRecordingInputs("rec_short_deadline")).resolves.toBe("finalizing");
+
+    const activationTtl = redis.expirations.get("recording_activation:rec_short_deadline")!;
+    const finalizingTtl = redis.expirations.get("recording_finalizing:rec_short_deadline")!;
+    expect(activationTtl).toBeLessThanOrEqual(remainingBeforeClose);
+    expect(activationTtl).toBeLessThanOrEqual(120_000);
+    expect(finalizingTtl).toBe(activationTtl);
+  });
+});
 
 describe("RedisRoomRepository media lease liveness", () => {
   it("applies the empty-room deadline to room metadata, slug lookup, session and token index", async () => {

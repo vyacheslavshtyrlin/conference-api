@@ -14,10 +14,15 @@ const integrationJwtCredentialSchema = z.object({
   issuer: z.string().trim().min(1).max(512),
   audience: z.string().trim().min(1).max(512),
   hs256Secret: z.string().min(32),
+  recordingCallback: z.object({
+    baseUrl: z.string().url(),
+    hs256Secret: z.string().min(32),
+  }).optional(),
 });
 
 const integrationJwtCredentialsSchema = z.preprocess((value) => {
   if (value === undefined || typeof value !== "string") return value;
+  if (!value.trim()) return undefined;
 
   try {
     return JSON.parse(value) as unknown;
@@ -52,6 +57,27 @@ const apiConfigSchema = z
     INTEGRATION_JWT_MAX_TTL_SECONDS: z.coerce.number().int().min(60).max(3_600).default(900),
     INTEGRATION_RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
     INTEGRATION_RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(60),
+    RECORDING_DELIVERY_ENABLED: falseByDefaultBooleanStringSchema,
+    DATABASE_URL: z.string().url().optional(),
+    RECORDING_S3_ENDPOINT: z.string().url().optional(),
+    RECORDING_S3_PUBLIC_ENDPOINT: z.string().url().optional(),
+    RECORDING_S3_REGION: z.string().trim().min(1).optional(),
+    RECORDING_S3_BUCKET: z.string().trim().min(3).max(63).optional(),
+    RECORDING_S3_ACCESS_KEY_ID: z.string().trim().min(1).optional(),
+    RECORDING_S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    RECORDING_S3_FORCE_PATH_STYLE: falseByDefaultBooleanStringSchema,
+    RECORDING_S3_PRESIGN_TTL_SECONDS: z.coerce.number().int().min(60).max(3_600).default(900),
+    RECORDING_ARTIFACT_RETENTION_DAYS: z.coerce.number().int().min(1).max(3_650).optional(),
+    RECORDING_COMPOSITION_LEASE_SECONDS: z.coerce.number().int().min(30).max(3_600).default(300),
+    RECORDING_CAPTURE_SERVICE_SECRET: z.string().min(32).optional(),
+    RECORDING_COMPOSITION_SERVICE_SECRET: z.string().min(32).optional(),
+    RECORDING_CONTROL_JWT_ISSUER: z.string().trim().min(1).optional(),
+    RECORDING_CONTROL_JWT_AUDIENCE: z.string().trim().min(1).optional(),
+    RECORDING_CONTROL_JWT_HS256_SECRET: z.string().min(32).optional(),
+    RECORDING_CONTROL_JWT_MAX_TTL_SECONDS: z.coerce.number().int().min(60).max(3_600).optional(),
+    RECORDING_BOT_ADMISSION_JWT_ISSUER: z.string().trim().min(1).max(512).optional(),
+    RECORDING_BOT_ADMISSION_JWT_HS256_SECRET: z.string().min(32).optional(),
+    RECORDING_BOT_ADMISSION_TTL_SECONDS: z.coerce.number().int().min(1).max(60).default(60),
   })
   .superRefine((config, context) => {
     if (config.NODE_ENV === "production" && config.JOIN_TOKEN_SECRET === defaultJoinTokenSecret) {
@@ -125,6 +151,59 @@ const apiConfigSchema = z
         path: ["INTEGRATION_JWT_CREDENTIALS_JSON"],
         message: "is required when integration API is enabled",
       });
+    }
+
+    if (config.RECORDING_DELIVERY_ENABLED) {
+      const required = [
+        "DATABASE_URL",
+        "RECORDING_S3_ENDPOINT",
+        "RECORDING_S3_REGION",
+        "RECORDING_S3_BUCKET",
+        "RECORDING_S3_ACCESS_KEY_ID",
+        "RECORDING_S3_SECRET_ACCESS_KEY",
+        "RECORDING_ARTIFACT_RETENTION_DAYS",
+        "RECORDING_CAPTURE_SERVICE_SECRET",
+        "RECORDING_COMPOSITION_SERVICE_SECRET",
+      ] as const;
+      for (const field of required) {
+        if (!config[field]) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [field],
+            message: "is required when recording delivery is enabled",
+          });
+        }
+      }
+    }
+
+    const recordingControlFields = [
+      ["RECORDING_CONTROL_JWT_ISSUER", config.RECORDING_CONTROL_JWT_ISSUER],
+      ["RECORDING_CONTROL_JWT_AUDIENCE", config.RECORDING_CONTROL_JWT_AUDIENCE],
+      ["RECORDING_CONTROL_JWT_HS256_SECRET", config.RECORDING_CONTROL_JWT_HS256_SECRET],
+    ] as const;
+    if (recordingControlFields.some(([, value]) => value !== undefined) && !recordingControlFields.every(([, value]) => value !== undefined)) {
+      for (const [field, value] of recordingControlFields) {
+        if (value === undefined) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [field],
+            message: "is required when recording control JWT validation is configured",
+          });
+        }
+      }
+    }
+
+    const botAdmissionFields = [
+      ["RECORDING_BOT_ADMISSION_JWT_ISSUER", config.RECORDING_BOT_ADMISSION_JWT_ISSUER],
+      ["RECORDING_BOT_ADMISSION_JWT_HS256_SECRET", config.RECORDING_BOT_ADMISSION_JWT_HS256_SECRET],
+    ] as const;
+    const hasCompleteBotAdmissionConfig = botAdmissionFields.every(([, value]) => value !== undefined);
+    if (botAdmissionFields.some(([, value]) => value !== undefined) && !hasCompleteBotAdmissionConfig) {
+      for (const [field, value] of botAdmissionFields) {
+        if (value === undefined) {
+          context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: "is required when recording bot admission signing is configured" });
+        }
+      }
     }
   });
 

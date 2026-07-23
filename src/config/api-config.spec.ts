@@ -155,4 +155,26 @@ describe("validateApiConfig", () => {
       }),
     ).toThrow("INTEGRATION_JWT_CREDENTIALS_JSON");
   });
+
+  it("requires bot admission signing configuration to be complete when configured", () => {
+    expect(() => validateApiConfig({
+      NODE_ENV: "test",
+      RECORDING_BOT_ADMISSION_JWT_ISSUER: "conference-api",
+    })).toThrow("RECORDING_BOT_ADMISSION_JWT_HS256_SECRET");
+  });
+
+  it("rejects bot admission TTL above the 60-second contract maximum", () => {
+    expect(() => validateApiConfig({ NODE_ENV: "test", RECORDING_BOT_ADMISSION_TTL_SECONDS: "61" })).toThrow(
+      "RECORDING_BOT_ADMISSION_TTL_SECONDS"
+    );
+  });
+
+  it("accepts complete bot admission configuration", () => {
+    expect(validateApiConfig({
+      NODE_ENV: "test",
+      RECORDING_BOT_ADMISSION_JWT_ISSUER: "conference-api",
+      RECORDING_BOT_ADMISSION_JWT_HS256_SECRET: "recording-bot-admission-secret-32-chars",
+      RECORDING_BOT_ADMISSION_TTL_SECONDS: "45",
+    })).toMatchObject({ RECORDING_BOT_ADMISSION_TTL_SECONDS: 45 });
+  });
 });
