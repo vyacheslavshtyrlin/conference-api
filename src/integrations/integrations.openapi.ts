@@ -113,6 +113,111 @@ export const createIntegrationRoomResponseOpenApiSchema = {
   },
 } satisfies SchemaObject;
 
+export const recordingStatusOpenApiSchema = {
+  type: "object",
+  required: ["recordingId", "status", "expiresAt", "artifact"],
+  properties: {
+    recordingId: { type: "string", example: "rec_01H...", description: "Opaque recording identifier." },
+    status: {
+      type: "string",
+      enum: ["requested", "capturing", "captured", "composing", "ready", "error", "cancelled", "expired"],
+      example: "ready",
+      description: "Current integration-facing recording state. Only `ready` has an artifact.",
+    },
+    expiresAt: { type: "string", format: "date-time", example: "2026-08-22T16:56:58.392Z" },
+    artifact: {
+      nullable: true,
+      description: "Present only when status is `ready`. downloadUrl is short-lived and is regenerated on every status request.",
+      type: "object",
+      required: ["bytes", "contentType", "durationSeconds", "downloadUrl", "downloadUrlExpiresAt"],
+      properties: {
+        bytes: { type: "integer", format: "int64", example: 6550099 },
+        contentType: { type: "string", example: "video/mp4" },
+        durationSeconds: { type: "number", format: "double", example: 45.86 },
+        downloadUrl: { type: "string", format: "uri", example: "https://storage.yandexcloud.net/<bucket>/final/rec_01H/artifact.mp4?<signed-query>" },
+        downloadUrlExpiresAt: { type: "string", format: "date-time", example: "2026-07-24T18:15:00.000Z" },
+      },
+    },
+    error: {
+      type: "object",
+      nullable: true,
+      description: "Returned only for status `error`.",
+      required: ["code", "message"],
+      properties: {
+        code: { type: "string", example: "COMPOSITION_FAILED" },
+        message: { type: "string", example: "Final MP4 verification failed" },
+      },
+    },
+  },
+} satisfies SchemaObject;
+
+export const roomRecordingsResponseOpenApiSchema = {
+  type: "object",
+  required: ["roomId", "recordings"],
+  properties: {
+    roomId: { type: "string", example: "room_01H..." },
+    recordings: { type: "array", items: recordingStatusOpenApiSchema },
+  },
+} satisfies SchemaObject;
+
+export const roomHistoryResponseOpenApiSchema = {
+  type: "object",
+  required: ["room", "recording", "participants", "chat"],
+  properties: {
+    room: {
+      type: "object",
+      required: ["roomId", "createdAt", "closedAt", "closedReason", "expiresAt"],
+      properties: {
+        roomId: { type: "string", example: "room_01H..." },
+        createdAt: { type: "string", format: "date-time" },
+        closedAt: { type: "string", format: "date-time", nullable: true },
+        closedReason: { type: "string", nullable: true, example: "closed_by_creator" },
+        expiresAt: { type: "string", format: "date-time" },
+      },
+    },
+    recording: { nullable: true, allOf: [recordingStatusOpenApiSchema] },
+    participants: {
+      type: "array",
+      description: "Durable participant session history in join order.",
+      items: {
+        type: "object",
+        required: ["participantId", "displayName", "joinedAt", "leftAt"],
+        properties: {
+          participantId: { type: "string", example: "peer_01H..." },
+          displayName: { type: "string", example: "Анна Иванова" },
+          joinedAt: { type: "string", format: "date-time" },
+          leftAt: { type: "string", format: "date-time", nullable: true },
+        },
+      },
+    },
+    chat: {
+      type: "array",
+      maxItems: 500,
+      description: "Room chat and system join/leave events, in chronological order.",
+      items: {
+        type: "object",
+        required: ["messageId", "kind", "participantId", "authorName", "text", "createdAt"],
+        properties: {
+          messageId: { type: "string", example: "msg_01H..." },
+          kind: { type: "string", enum: ["user", "system"], example: "user" },
+          participantId: { type: "string", nullable: true, example: "peer_01H..." },
+          authorName: { type: "string", nullable: true, example: "Анна Иванова" },
+          text: { type: "string", example: "Добрый день" },
+          createdAt: { type: "string", format: "date-time" },
+        },
+      },
+    },
+  },
+} satisfies SchemaObject;
+
+export const retryRecordingCallbackResponseOpenApiSchema = {
+  type: "object",
+  required: ["retried"],
+  properties: {
+    retried: { type: "integer", minimum: 0, example: 1, description: "Number of failed callback deliveries moved back to pending." },
+  },
+} satisfies SchemaObject;
+
 export const createIntegrationAdmissionRequestOpenApiSchema = {
   type: "object",
   required: ["identity", "roomControls", "expiresAt"],

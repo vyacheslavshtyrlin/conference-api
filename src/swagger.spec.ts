@@ -30,6 +30,10 @@ describe("configureSwaggerDocumentation", () => {
     expect(response.body.paths).toHaveProperty("/api/v1/rooms");
     expect(response.body.paths).toHaveProperty("/api/integrations/v1/rooms");
     expect(response.body.paths).toHaveProperty("/api/integrations/v1/rooms/{roomId}/admissions");
+    expect(response.body.paths).toHaveProperty("/api/integrations/v1/recordings/{recordingId}");
+    expect(response.body.paths).toHaveProperty("/api/integrations/v1/recordings/{recordingId}/callbacks/retry");
+    expect(response.body.paths).toHaveProperty("/api/integrations/v1/rooms/{roomId}/recordings");
+    expect(response.body.paths).toHaveProperty("/api/integrations/v1/rooms/{roomId}/history");
     expect(response.body.paths["/api/v1/rooms"].post.responses["201"].content["application/json"].schema).toBeDefined();
     expect(response.body.paths["/api/integrations/v1/rooms"].post.security).toEqual([
       { "integration-service-jwt": [] },
@@ -61,6 +65,12 @@ describe("configureSwaggerDocumentation", () => {
       })
     );
     expect(response.body.paths["/api/integrations/v1/rooms/{roomId}/admissions"].post.responses).not.toHaveProperty("409");
+    expect(response.body.paths["/api/integrations/v1/recordings/{recordingId}"].get.responses["200"].content["application/json"].examples).toHaveProperty("ready");
+    expect(response.body.paths["/api/integrations/v1/rooms/{roomId}/recordings"].get.responses["200"].content["application/json"].schema.properties.recordings.type).toBe("array");
+    expect(response.body.paths["/api/integrations/v1/rooms/{roomId}/history"].get.responses["200"].content["application/json"].schema.properties).toEqual(
+      expect.objectContaining({ participants: expect.any(Object), chat: expect.any(Object) })
+    );
+    expect(response.body.paths["/api/integrations/v1/recordings/{recordingId}/callbacks/retry"].post.responses["201"].content["application/json"].schema.properties.retried).toBeDefined();
     expect(response.body.components.securitySchemes["integration-service-jwt"].description).toContain("HS256");
     expect(response.body.components.securitySchemes["integration-service-jwt"].description).toContain("обязательному `sub`");
     expect(response.body.tags).toEqual(

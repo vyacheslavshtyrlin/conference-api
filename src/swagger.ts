@@ -15,6 +15,10 @@ import {
   integrationErrorResponsesOpenApi,
   integrationServiceJwtOpenApiDescription,
   integrationTagDescription,
+  recordingStatusOpenApiSchema,
+  retryRecordingCallbackResponseOpenApiSchema,
+  roomHistoryResponseOpenApiSchema,
+  roomRecordingsResponseOpenApiSchema,
 } from "./integrations/integrations.openapi.js";
 import {
   contractErrorOpenApiSchema,
@@ -409,6 +413,96 @@ function createOpenApiDocument(): OpenAPIObject {
           },
         },
       },
+      "/api/integrations/v1/recordings/{recordingId}": {
+        get: {
+          operationId: "RecordingStatusController_get",
+          tags: ["integration recordings"],
+          summary: "Get recording status and download URL",
+          description:
+            "Returns a recording owned by the current integration. When the recording is ready, each request issues a fresh short-lived direct S3 download URL. Storage keys and credentials are never returned.",
+          security: [{ "integration-service-jwt": [] }],
+          parameters: [{ name: "recordingId", in: "path", required: true, schema: { type: "string" }, example: "rec_01H..." }],
+          responses: {
+            "200": {
+              description: "Current recording state.",
+              content: {
+                "application/json": {
+                  schema: recordingStatusOpenApiSchema,
+                  examples: {
+                    ready: {
+                      summary: "Ready MP4",
+                      value: {
+                        recordingId: "rec_01H...",
+                        status: "ready",
+                        expiresAt: "2026-08-22T16:56:58.392Z",
+                        artifact: {
+                          bytes: 6550099,
+                          contentType: "video/mp4",
+                          durationSeconds: 45.86,
+                          downloadUrl: "https://storage.yandexcloud.net/<bucket>/final/rec_01H/artifact.mp4?<signed-query>",
+                          downloadUrlExpiresAt: "2026-07-24T18:15:00.000Z",
+                        },
+                      },
+                    },
+                    processing: { summary: "Still composing", value: { recordingId: "rec_01H...", status: "composing", expiresAt: "2026-08-22T16:56:58.392Z", artifact: null } },
+                    failed: { summary: "Terminal recording error", value: { recordingId: "rec_01H...", status: "error", expiresAt: "2026-08-22T16:56:58.392Z", artifact: null, error: { code: "COMPOSITION_FAILED", message: "Final MP4 verification failed" } } },
+                  },
+                },
+              },
+            },
+            "401": { description: "Missing or invalid integration service JWT.", content: { "application/json": { schema: contractErrorOpenApiSchema } } },
+            "403": { description: "The recording does not belong to this integration.", content: { "application/json": { schema: contractErrorOpenApiSchema } } },
+          },
+        },
+      },
+      "/api/integrations/v1/recordings/{recordingId}/callbacks/retry": {
+        post: {
+          operationId: "RecordingStatusController_retryCallback",
+          tags: ["integration recordings"],
+          summary: "Retry failed recording-ready callback",
+          description:
+            "Moves failed `recording.ready` callback deliveries for this owned recording back to pending. It does not recompose the video and does not change a ready recording state.",
+          security: [{ "integration-service-jwt": [] }],
+          parameters: [{ name: "recordingId", in: "path", required: true, schema: { type: "string" }, example: "rec_01H..." }],
+          responses: {
+            "201": { description: "Failed callback deliveries scheduled for retry.", content: { "application/json": { schema: retryRecordingCallbackResponseOpenApiSchema, example: { retried: 1 } } } },
+            "401": { description: "Missing or invalid integration service JWT.", content: { "application/json": { schema: contractErrorOpenApiSchema } } },
+            "403": { description: "The recording does not belong to this integration.", content: { "application/json": { schema: contractErrorOpenApiSchema } } },
+          },
+        },
+      },
+      "/api/integrations/v1/rooms/{roomId}/recordings": {
+        get: {
+          operationId: "RoomRecordingsController_get",
+          tags: ["integration recordings"],
+          summary: "List recordings of an integration room",
+          description:
+            "Returns all recordings belonging to the current integration and room. A room can contain more than one recording, so the response uses an array. Ready items carry fresh short-lived direct download URLs.",
+          security: [{ "integration-service-jwt": [] }],
+          parameters: [{ name: "roomId", in: "path", required: true, schema: { type: "string" }, example: "room_01H..." }],
+          responses: {
+            "200": { description: "Recordings in creation order; an empty array is valid.", content: { "application/json": { schema: roomRecordingsResponseOpenApiSchema, example: { roomId: "room_01H...", recordings: [{ recordingId: "rec_01H...", status: "ready", expiresAt: "2026-08-22T16:56:58.392Z", artifact: { bytes: 6550099, contentType: "video/mp4", durationSeconds: 45.86, downloadUrl: "https://storage.yandexcloud.net/<bucket>/final/rec_01H/artifact.mp4?<signed-query>", downloadUrlExpiresAt: "2026-07-24T18:15:00.000Z" } }] } } } },
+            "401": { description: "Missing or invalid integration service JWT.", content: { "application/json": { schema: contractErrorOpenApiSchema } } },
+            "403": { description: "The room does not belong to this integration.", content: { "application/json": { schema: contractErrorOpenApiSchema } } },
+          },
+        },
+      },
+      "/api/integrations/v1/rooms/{roomId}/history": {
+        get: {
+          operationId: "RoomHistoryController_get",
+          tags: ["integration recordings"],
+          summary: "Get room history, participant sessions and chat",
+          description:
+            "Returns durable room metadata, recording projection, participant join/leave sessions and up to 500 chat or system messages. Data is available only to the owning integration.",
+          security: [{ "integration-service-jwt": [] }],
+          parameters: [{ name: "roomId", in: "path", required: true, schema: { type: "string" }, example: "room_01H..." }],
+          responses: {
+            "200": { description: "Owned room history.", content: { "application/json": { schema: roomHistoryResponseOpenApiSchema, example: { room: { roomId: "room_01H...", createdAt: "2026-07-24T16:00:00.000Z", closedAt: "2026-07-24T16:45:00.000Z", closedReason: "closed_by_creator", expiresAt: "2026-08-23T16:00:00.000Z" }, recording: null, participants: [{ participantId: "peer_01H...", displayName: "Анна Иванова", joinedAt: "2026-07-24T16:00:10.000Z", leftAt: "2026-07-24T16:44:30.000Z" }], chat: [{ messageId: "msg_01H...", kind: "user", participantId: "peer_01H...", authorName: "Анна Иванова", text: "Добрый день", createdAt: "2026-07-24T16:01:00.000Z" }] } } } },
+            "401": { description: "Missing or invalid integration service JWT.", content: { "application/json": { schema: contractErrorOpenApiSchema } } },
+            "403": { description: "The room does not belong to this integration or its history is unavailable.", content: { "application/json": { schema: contractErrorOpenApiSchema } } },
+          },
+        },
+      },
       "/api/v1/admissions/exchange": {
         post: {
           operationId: "AdmissionsController_exchange",
@@ -457,6 +551,7 @@ function createOpenApiDocument(): OpenAPIObject {
       { name: "admissions", description: "Браузерный обмен одноразового кода входа." },
       { name: "app-config", description: "Конфигурация возможностей браузера только для чтения." },
       { name: "integrations", description: integrationTagDescription },
+      { name: "integration recordings", description: "Записи, история комнаты и повторная доставка callback для владельца integration service JWT." },
       { name: "rooms", description: "Жизненный цикл комнат в браузере и операции приватного доступа по одобрению." },
     ],
   };
