@@ -12,13 +12,21 @@ export class RecordingCleanupService implements OnModuleInit, OnModuleDestroy {
   onModuleInit(): void { if (this.config.get("RECORDING_DELIVERY_ENABLED", { infer: true })) this.timer = setInterval(() => void this.run(), 60_000).unref(); }
   onModuleDestroy(): void { if (this.timer) clearInterval(this.timer); }
   async run(): Promise<void> {
-    const expired = await this.prisma.recording.findMany({ where: { state: RecordingState.READY, expiresAt: { lte: new Date() } }, include: { artifacts: true, callbackDeliveries: true }, take: 50 });
+    const expired = await this.prisma.recording.findMany({
+      where: { state: RecordingState.READY, expiresAt: { lte: new Date() } },
+      include: { artifacts: true, segments: true, callbackDeliveries: true },
+      take: 50,
+    });
     for (const recording of expired) {
       await this.prisma.$transaction(async (tx) => {
         await tx.callbackDelivery.updateMany({ where: { recordingId: recording.id, state: CallbackDeliveryState.PENDING }, data: { state: CallbackDeliveryState.FAILED, lastError: "ARTIFACT_EXPIRED" } });
         await tx.recording.updateMany({ where: { id: recording.id, state: RecordingState.READY }, data: { state: RecordingState.EXPIRED } });
       });
-      await Promise.all(recording.artifacts.map((artifact) => this.storage.delete(artifact.objectKey).catch(() => undefined)));
+      await Promise.all(
+        [...recording.artifacts, ...recording.segments].map(({ objectKey }) =>
+          this.storage.delete(objectKey).catch(() => undefined),
+        ),
+      );
     }
   }
 }
