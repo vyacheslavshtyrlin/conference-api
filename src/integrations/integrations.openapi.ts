@@ -127,14 +127,14 @@ export const recordingStatusOpenApiSchema = {
     expiresAt: { type: "string", format: "date-time", example: "2026-08-22T16:56:58.392Z" },
     artifact: {
       nullable: true,
-      description: "Present only when status is `ready`. downloadUrl is short-lived and is regenerated on every status request.",
+      description: "Present only when status is `ready`. downloadUrl is a short-lived server-to-server upstream URL, regenerated on every status request; do not pass it to a browser.",
       type: "object",
       required: ["bytes", "contentType", "durationSeconds", "downloadUrl", "downloadUrlExpiresAt"],
       properties: {
         bytes: { type: "integer", format: "int64", example: 6550099 },
         contentType: { type: "string", example: "video/mp4" },
         durationSeconds: { type: "number", format: "double", example: 45.86 },
-        downloadUrl: { type: "string", format: "uri", example: "https://storage.yandexcloud.net/<bucket>/final/rec_01H/artifact.mp4?<signed-query>" },
+        downloadUrl: { type: "string", format: "uri", example: "https://<private-object-storage>/final/rec_01H/artifact.mp4?<signed-query>" },
         downloadUrlExpiresAt: { type: "string", format: "date-time", example: "2026-07-24T18:15:00.000Z" },
       },
     },

@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, Param, Req, UseGuards } from "@nestjs/common";
+import { Controller, Get, Header, Inject, Param, Req, UseGuards } from "@nestjs/common";
 import { IntegrationAuthGuard, type IntegrationHttpRequest } from "./integration-auth.guard.js";
 import { IntegrationsService } from "./integrations.service.js";
 
@@ -8,6 +8,7 @@ export class RoomHistoryController {
   constructor(@Inject(IntegrationsService) private readonly integrations: IntegrationsService) {}
 
   @Get(":roomId/history")
+  @Header("Cache-Control", "private, no-store")
   get(@Req() request: IntegrationHttpRequest, @Param("roomId") roomId: string) {
     return this.integrations.getRoomHistory(request.integration.integrationId, roomId);
   }

@@ -186,7 +186,7 @@ export class IntegrationsService {
       const response = { recordingId: recording.id, status: recording.state === "FAILED" ? "error" : recording.state.toLowerCase(), expiresAt: recording.expiresAt.toISOString(), artifact: null as null };
       return recording.state === "FAILED" ? { ...response, error: { code: recording.failureCode ?? "RECORDING_FAILED", message: recording.failureMessage ?? "Recording failed" } } : response;
     }
-    const download = await this.storage.allocatePublicGet(artifact.objectKey);
+    const download = await this.storage.allocateIntegrationGet(artifact.objectKey);
     return { recordingId: recording.id, status: "ready", expiresAt: recording.expiresAt.toISOString(), artifact: { bytes: Number(artifact.bytes), contentType: artifact.contentType, durationSeconds: Number(artifact.durationSeconds), downloadUrl: download.url, downloadUrlExpiresAt: download.expiresAt } };
   }
 
@@ -218,7 +218,7 @@ export class IntegrationsService {
                 }
               : response;
           }
-          const download = await this.storage.allocatePublicGet(artifact.objectKey);
+          const download = await this.storage.allocateIntegrationGet(artifact.objectKey);
           return {
             recordingId: recording.id,
             status: "ready",
@@ -261,7 +261,7 @@ export class IntegrationsService {
               ? { error: { code: recording.failureCode ?? "RECORDING_FAILED", message: recording.failureMessage ?? "Recording failed" } }
               : {}),
           }
-        : await this.storage.allocatePublicGet(artifact.objectKey).then((download) => ({
+        : await this.storage.allocateIntegrationGet(artifact.objectKey).then((download) => ({
             recordingId: recording.id,
             status: "ready",
             expiresAt: recording.expiresAt.toISOString(),

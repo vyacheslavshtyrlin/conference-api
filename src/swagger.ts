@@ -417,9 +417,9 @@ function createOpenApiDocument(): OpenAPIObject {
         get: {
           operationId: "RecordingStatusController_get",
           tags: ["integration recordings"],
-          summary: "Get recording status and download URL",
+          summary: "Get recording status and server-side upstream URL",
           description:
-            "Returns a recording owned by the current integration. When the recording is ready, each request issues a fresh short-lived direct S3 download URL. Storage keys and credentials are never returned.",
+            "Returns a recording owned by the current integration. When ready, each request issues a fresh short-lived upstream object-storage URL for the integration backend only; it must not be passed to a browser. Storage keys and credentials are never returned.",
           security: [{ "integration-service-jwt": [] }],
           parameters: [{ name: "recordingId", in: "path", required: true, schema: { type: "string" }, example: "rec_01H..." }],
           responses: {
@@ -439,7 +439,7 @@ function createOpenApiDocument(): OpenAPIObject {
                           bytes: 6550099,
                           contentType: "video/mp4",
                           durationSeconds: 45.86,
-                          downloadUrl: "https://storage.yandexcloud.net/<bucket>/final/rec_01H/artifact.mp4?<signed-query>",
+                          downloadUrl: "https://<private-object-storage>/final/rec_01H/artifact.mp4?<signed-query>",
                           downloadUrlExpiresAt: "2026-07-24T18:15:00.000Z",
                         },
                       },
@@ -477,11 +477,11 @@ function createOpenApiDocument(): OpenAPIObject {
           tags: ["integration recordings"],
           summary: "List recordings of an integration room",
           description:
-            "Returns all recordings belonging to the current integration and room. A room can contain more than one recording, so the response uses an array. Ready items carry fresh short-lived direct download URLs.",
+            "Returns all recordings belonging to the current integration and room. A room can contain more than one recording, so the response uses an array. Ready items carry fresh short-lived upstream URLs for the integration backend only.",
           security: [{ "integration-service-jwt": [] }],
           parameters: [{ name: "roomId", in: "path", required: true, schema: { type: "string" }, example: "room_01H..." }],
           responses: {
-            "200": { description: "Recordings in creation order; an empty array is valid.", content: { "application/json": { schema: roomRecordingsResponseOpenApiSchema, example: { roomId: "room_01H...", recordings: [{ recordingId: "rec_01H...", status: "ready", expiresAt: "2026-08-22T16:56:58.392Z", artifact: { bytes: 6550099, contentType: "video/mp4", durationSeconds: 45.86, downloadUrl: "https://storage.yandexcloud.net/<bucket>/final/rec_01H/artifact.mp4?<signed-query>", downloadUrlExpiresAt: "2026-07-24T18:15:00.000Z" } }] } } } },
+            "200": { description: "Recordings in creation order; an empty array is valid.", content: { "application/json": { schema: roomRecordingsResponseOpenApiSchema, example: { roomId: "room_01H...", recordings: [{ recordingId: "rec_01H...", status: "ready", expiresAt: "2026-08-22T16:56:58.392Z", artifact: { bytes: 6550099, contentType: "video/mp4", durationSeconds: 45.86, downloadUrl: "https://<private-object-storage>/final/rec_01H/artifact.mp4?<signed-query>", downloadUrlExpiresAt: "2026-07-24T18:15:00.000Z" } }] } } } },
             "401": { description: "Missing or invalid integration service JWT.", content: { "application/json": { schema: contractErrorOpenApiSchema } } },
             "403": { description: "The room does not belong to this integration.", content: { "application/json": { schema: contractErrorOpenApiSchema } } },
           },

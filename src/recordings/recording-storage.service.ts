@@ -53,7 +53,7 @@ export class RecordingStorageService {
     };
   }
 
-  async allocatePublicGet(objectKey: string): Promise<{ url: string; expiresAt: string }> {
+  async allocateIntegrationGet(objectKey: string): Promise<{ url: string; expiresAt: string }> {
     const expiresIn = this.config.get("RECORDING_S3_PRESIGN_TTL_SECONDS", { infer: true });
     return {
       url: await getSignedUrl(this.publicClient, new GetObjectCommand({ Bucket: this.bucket(), Key: objectKey }), { expiresIn }),

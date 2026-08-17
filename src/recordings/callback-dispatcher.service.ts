@@ -20,7 +20,7 @@ export class CallbackDispatcherService implements OnModuleInit, OnModuleDestroy 
     const credentials = this.config.get("INTEGRATION_JWT_CREDENTIALS_JSON", { infer: true }) ?? [];
     const callback = credentials.find((item) => item.integrationId === delivery.recording.integrationId)?.recordingCallback;
     if (!callback) return this.markFailed(delivery.id, "CALLBACK_NOT_CONFIGURED");
-    const download = await this.storage.allocatePublicGet(delivery.artifact.objectKey);
+    const download = await this.storage.allocateIntegrationGet(delivery.artifact.objectKey);
     const timestamp = new Date().toISOString();
     const body = JSON.stringify({ eventId: delivery.eventId, type: "recording.ready", occurredAt: timestamp, recordingId: delivery.recording.id, artifact: { bytes: Number(delivery.artifact.bytes), contentType: delivery.artifact.contentType, downloadUrl: download.url, downloadUrlExpiresAt: download.expiresAt } });
     try {
