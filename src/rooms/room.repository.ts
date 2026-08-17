@@ -13,6 +13,7 @@ export type CreateRoomRecord = {
   signalingUrl: string;
   createdAt: string;
   expiresAt: string | null;
+  recordingRequested?: boolean;
 };
 
 export type CreateIntegrationRoomRecord = {
@@ -1361,6 +1362,7 @@ function parseRoomMetadata(value: unknown): RoomMetadata | undefined {
     expiresAt: value.expiresAt,
     status: value.status,
     closedReason: value.closedReason ?? null,
+    recordingRequested: value.recordingRequested ?? false,
   };
 
   if (
@@ -1377,7 +1379,8 @@ function parseRoomMetadata(value: unknown): RoomMetadata | undefined {
     Number.isNaN(Date.parse(room.createdAt)) ||
     !isExpiresAt(room.expiresAt) ||
     (room.status !== "active" && room.status !== "closed") ||
-    !isClosedReason(room.closedReason)
+    !isClosedReason(room.closedReason) ||
+    typeof room.recordingRequested !== "boolean"
   ) {
     return undefined;
   }

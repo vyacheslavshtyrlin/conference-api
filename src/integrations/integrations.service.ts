@@ -90,6 +90,7 @@ export class IntegrationsService {
             signalingUrl: mediaNode.signalingUrl,
             createdAt: createdAt.toISOString(),
             expiresAt,
+            recordingRequested,
           },
           {
             integration: {

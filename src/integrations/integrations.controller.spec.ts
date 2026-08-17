@@ -138,7 +138,7 @@ class InMemoryIntegrationRoomRepository extends RoomRepository {
       }
     }
 
-    const room: RoomMetadata = { ...record, accessPolicy: record.accessPolicy ?? "link", status: "active", closedReason: null };
+    const room: RoomMetadata = { ...record, accessPolicy: record.accessPolicy ?? "link", status: "active", closedReason: null, recordingRequested: record.recordingRequested ?? false };
     this.rooms.set(room.roomId, room);
 
     if (integration) {
